@@ -37,6 +37,7 @@ const css=document.createElement('style');css.textContent=`
 #dlgApp .ctrls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 #dlgApp .dprog{display:flex;gap:4px}#dlgApp .dprog i{flex:1;height:6px;border-radius:3px;background:var(--chip);padding:0}
 #dlgApp .dprog i.pd{background:var(--lnt)}#dlgApp .dprog i.pc{background:var(--green2)}
+#dlgApp select{max-width:min(100%,260px)}
 #dlgApp .dstage{display:grid;gap:14px;max-width:760px}
 #dlgApp .bigline{font-size:clamp(22px,2.8vw,28px);line-height:1.5}
 #dlgApp .w{border-radius:3px;padding:0 1px}
@@ -62,12 +63,12 @@ const css=document.createElement('style');css.textContent=`
 document.head.appendChild(css);
 
 /* ---------- words ---------- */
-function lineHTML(l,s,st){ // st: optional per-word marking statuses from a scored take
+function lineHTML(l,s,st,acc){ // st: optional per-word marking statuses from a scored take; acc: optional per-word Azure scores
  let i=0,k=0;const toks=l.tok;
- return esc(l.de).replace(/[\p{L}\p{N}ß]+/gu,t=>{const tk=toks[i++]||{};const mark=st?st[k++]:'';
+ return esc(l.de).replace(/[\p{L}\p{N}ß]+/gu,t=>{const tk=toks[i++]||{};const a=acc?acc[k]:null;const mark=st?st[k++]:'';
   const inBlock=tk.r&&tk.r>=s.words[0]&&tk.r<=s.words[1];
   const mean=tk.r?(WMAP.get(tk.r)||[])[2]:tk.g;const tip=tk.name?'name':mean||'';
-  return `<span class="wd ${inBlock?'nw':''} ${mark?'w '+mark:''}" data-tip="${esc(t+': '+tip+(tk.r?' · word no. '+tk.r:''))}">${t}</span>`});
+  return `<span class="wd ${inBlock?'nw':''} ${mark?'w '+mark:''}" data-tip="${esc(t+': '+tip+(tk.r?' · word no. '+tk.r:'')+(a!=null?' · your pronunciation: '+a+'/100':''))}">${t}</span>`});
 }
 function bindGloss(){const g=q('#gloss');if(!g)return;qa('.wd').forEach(w=>{w.onmouseenter=w.onclick=e=>{e.stopPropagation();g.textContent=w.dataset.tip}})}
 
@@ -89,13 +90,45 @@ function sayBrowser(l,s,r=rate){return new Promise(res=>{try{speechSynthesis.can
 
 /* ---------- Google Cloud Text-to-Speech (natural voices; each line is fetched once, then kept on this Mac) ---------- */
 const LS=(k,d)=>{try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}};
-const GC={sttModel:LS('gd-gstt',''),key:LS('gd-gkey',''),voices:LS('gd-gvoices',[]),pick:LS('gd-gpick',{}),enabled:LS('gd-gon',true),provider:LS('gd-gprov','gemini'),model:LS('gd-gmodel',''),err:''};
+const GC={sttModel:LS('gd-gstt',''),key:LS('gd-gkey',''),voices:LS('gd-gvoices',[]),pick:LS('gd-gpick',{}),enabled:LS('gd-gon',true),provider:'gemini',model:LS('gd-gmodel',''),err:''};
 const saveGC=()=>{try{localStorage.setItem('gd-gprov',JSON.stringify(GC.provider));localStorage.setItem('gd-gmodel',JSON.stringify(GC.model));localStorage.setItem('gd-gkey',JSON.stringify(GC.key));localStorage.setItem('gd-gvoices',JSON.stringify(GC.voices));localStorage.setItem('gd-gpick',JSON.stringify(GC.pick));localStorage.setItem('gd-gon',JSON.stringify(GC.enabled))}catch(e){}};
 const gRank=n=>/Chirp3-HD/i.test(n)?5:/Chirp-HD/i.test(n)?4:/Studio/i.test(n)?3:/Neural2/i.test(n)?2:/Wavenet/i.test(n)?1:0;
 const gAll=()=>GC.provider==='gemini'?GEM_VOICES:GC.voices;
 const gList=g=>gAll().filter(v=>v.ssmlGender===(g==='f'?'FEMALE':'MALE')).sort((a,b)=>gRank(b.name)-gRank(a.name)||a.name.localeCompare(b.name));
 function gVoice(g){const w=(GC.pick[GC.provider]||{})[g];if(w&&gAll().some(v=>v.name===w))return w;if(GC.provider==='gemini')return g==='f'?'Kore':'Charon';const l=gList(g);return l.length?l[0].name:(GC.voices[0]||{}).name}
 const gOn=()=>!!(GC.enabled&&GC.key&&(GC.provider==='gemini'?GC.model:GC.voices.length));
+/* ---------- ElevenLabs: the story voices (each line fetched once, then kept on this device) ---------- */
+const EL={key:LS('gd-elkey',''),voices:LS('gd-elvoices',[]),pick:LS('gd-elpick',{}),err:''};
+const saveEL=()=>{try{localStorage.setItem('gd-elkey',JSON.stringify(EL.key));localStorage.setItem('gd-elvoices',JSON.stringify(EL.voices));localStorage.setItem('gd-elpick',JSON.stringify(EL.pick))}catch(e){}};
+const ELAPI='https://api.elevenlabs.io/v1/';
+const elOn=()=>!!EL.key;
+async function elJSON(r){const j=await r.json().catch(()=>({}));if(!r.ok){const d=j.detail;throw new Error((d&&typeof d==='object'&&(d.message||d.status))||(typeof d==='string'?d:'')||('ElevenLabs answered '+r.status))}return j}
+async function elFetchVoices(key){const j=await elJSON(await fetch(ELAPI+'voices',{headers:{'xi-api-key':key}}));
+ const rank=c=>c==='generated'?0:c==='cloned'||c==='professional'?1:2;
+ return (j.voices||[]).map(v=>({id:v.voice_id,name:v.name,g:String((v.labels||{}).gender||'').toLowerCase(),cat:v.category||''})).sort((a,b)=>rank(a.cat)-rank(b.cat)||a.name.localeCompare(b.name))}
+function elVoice(g){const p=EL.pick[g];if(p&&p.id)return p;const want=g==='f'?'female':'male';const v=EL.voices.find(x=>x.g===want)||EL.voices[g==='f'?0:1]||EL.voices[0];return v?{id:v.id,name:v.name}:null}
+async function elAudio(text,g){const v=elVoice(g);if(!v)throw new Error('choose voices for Sophie and Moritz in the Voices panel');const k='el:'+v.id+'|'+text;const c=await cacheGet(k);if(c)return c;
+ const r=await fetch(ELAPI+'text-to-speech/'+encodeURIComponent(v.id)+'?output_format=mp3_44100_128',{method:'POST',headers:{'xi-api-key':EL.key,'Content-Type':'application/json','Accept':'audio/mpeg'},body:JSON.stringify({text,model_id:'eleven_multilingual_v2'})});
+ if(!r.ok)await elJSON(r);const b=new Blob([await r.arrayBuffer()],{type:'audio/mpeg'});if(!b.size)throw new Error('ElevenLabs sent no audio');await cachePut(k,b);return b}
+async function elUsage(){try{const j=await elJSON(await fetch(ELAPI+'user/subscription',{headers:{'xi-api-key':EL.key}}));return j.character_limit?{used:j.character_count||0,limit:j.character_limit}:null}catch(e){return null}}
+const ttsOn=()=>elOn()||gOn();
+const ttsName=()=>elOn()?'ElevenLabs':'Gemini';
+const voiceLabel=g=>elOn()?((elVoice(g)||{}).name||'?'):gVoice(g);
+async function lineBlob(text,g,onWait){if(elOn()){try{const b=await elAudio(text,g);EL.err='';return b}catch(e){EL.err=e.message||String(e);if(!gOn())throw e}}return gAudio(text,gVoice(g),onWait)}
+
+/* ---------- Azure pronunciation assessment: scores each recording against the exact line it was made for ---------- */
+const AZ={key:LS('gd-azkey',''),region:LS('gd-azregion','')};
+const saveAZ=()=>{try{localStorage.setItem('gd-azkey',JSON.stringify(AZ.key));localStorage.setItem('gd-azregion',JSON.stringify(AZ.region))}catch(e){}};
+const azOn=()=>!!(AZ.key&&AZ.region);
+async function azPost(wav,ref,key,region){
+ const params=btoa(unescape(encodeURIComponent(JSON.stringify({ReferenceText:ref,GradingSystem:'HundredMark',Granularity:'Phoneme',Dimension:'Comprehensive',EnableMiscue:true}))));
+ const r=await fetch(`https://${region}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=de-DE&format=detailed`,{method:'POST',
+  headers:{'Ocp-Apim-Subscription-Key':key,'Content-Type':'audio/wav; codecs=audio/pcm; samplerate=16000','Accept':'application/json','Pronunciation-Assessment':params},body:wav});
+ const t=await r.text();let j={};try{j=JSON.parse(t)}catch(e){}
+ if(!r.ok)throw new Error(r.status===401?'Azure rejected the key (check the key and the region)':(j.error&&j.error.message)||j.Message||('Azure answered '+r.status));return j}
+async function azAssess(blob,line){return azPost(await toWav16k(blob),line.de,AZ.key,AZ.region)}
+const anyKey=()=>elOn()||azOn()||(GC.provider==='gemini'&&!!GC.key);
+
 const GAPI='https://texttospeech.googleapis.com/v1/';
 async function gJSON(r){const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error((j.error&&j.error.message)||('Google answered '+r.status));return j}
 async function gFetchVoices(key){const j=await gJSON(await fetch(GAPI+'voices?languageCode=de-DE&key='+encodeURIComponent(key)));
@@ -104,10 +137,11 @@ function cacheGet(k){return idb.then(d=>d&&d.objectStoreNames.contains('tts')?ne
 function cachePut(k,b){return idb.then(d=>d&&d.objectStoreNames.contains('tts')?new Promise(res=>{const t=d.transaction('tts','readwrite');t.objectStore('tts').put(b,k);t.oncomplete=()=>res();t.onerror=()=>res()}):null).catch(()=>null)}
 async function gAudio(text,voice,onWait){const k=(GC.provider==='gemini'?'gem:':'')+voice+'|'+text;const c=await cacheGet(k);if(c)return c;
  if(GC.provider==='gemini'){const b=await gemSynth(text,voice,onWait);await cachePut(k,b);return b}
+ const b=await cloudSynth(text,voice);await cachePut(k,b);return b}
+async function cloudSynth(text,voice){
  const j=await gJSON(await fetch(GAPI+'text:synthesize?key='+encodeURIComponent(GC.key),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input:{text},voice:{languageCode:'de-DE',name:voice},audioConfig:{audioEncoding:'MP3'}})}));
  if(!j.audioContent)throw new Error('Google sent no audio.');const bin=atob(j.audioContent),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
- const b=new Blob([u],{type:'audio/mpeg'});await cachePut(k,b);return b}
-
+ return new Blob([u],{type:'audio/mpeg'})}
 /* Gemini speech: a key from Google AI Studio is enough (no billing account). Its voices speak natural standard German. */
 const GEM_F=['Kore','Aoede','Leda','Zephyr','Callirrhoe','Autonoe','Despina','Erinome','Laomedeia','Pulcherrima','Vindemiatrix','Sulafat','Achernar','Gacrux'];
 const GEM_M=['Charon','Puck','Orus','Fenrir','Enceladus','Iapetus','Umbriel','Algieba','Algenib','Rasalgethi','Alnilam','Schedar','Achird','Zubenelgenubi','Sadachbia','Sadaltager'];
@@ -125,11 +159,12 @@ async function gemSynth(text,voice,onWait){
   const r=await fetch(GEMAPI+'models/'+GC.model+':generateContent?key='+encodeURIComponent(GC.key),{method:'POST',headers:{'Content-Type':'application/json'},
    body:JSON.stringify({contents:[{parts:[{text}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:voice}}}}})});
   if(r.status===429||r.status===503){const j=await r.json().catch(()=>({}));const d=((j.error&&j.error.details)||[]).find(x=>x.retryDelay);const wait=d?parseFloat(d.retryDelay)*1000+500:(attempt+1)*15000;
+   if(wait>60000)break;
    if(onWait)onWait(Math.round(wait/1000));await sleep(wait);continue}
   const j=await gJSON(r);const part=(((j.candidates||[])[0]||{}).content||{}).parts||[];const ad=part.find(x=>x.inlineData);
   if(!ad)throw new Error('Gemini sent no audio for this line.');const bin=atob(ad.inlineData.data),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
   const m=/rate=(\d+)/.exec(ad.inlineData.mimeType||'');return /wav|mpeg|mp3|ogg/.test(ad.inlineData.mimeType||'')?new Blob([u],{type:ad.inlineData.mimeType}):pcmToWav(u,m?+m[1]:24000)}
- throw new Error("Google's free limit for speech is used up for now. Try again later, or use 'Prepare all stories' to fetch lines gradually.")}
+ throw new Error("Gemini's free daily allowance for speech is used up (it resets at 8–9am UK time). Lines already fetched still play in the Gemini voice; the rest use the browser voice until then.")}
 
 /* ---------- export: every line's audio as files in one .zip ---------- */
 const CRC=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0}return t})();
@@ -147,15 +182,15 @@ const slug=t=>t.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/ß/g,'ss').repl
 async function exportAudio(progress){
  const files=[],enc=new TextEncoder();let n=0;const total=ST.reduce((a,s)=>a+s.lines.length,0);let txt='';
  for(const [si,s] of ST.entries()){const dir=`Story-${si+1}-${slug(s.title)}`;txt+=`Story ${si+1}: ${s.title} (${s.en_title})\n`;
-  for(const [li,l] of s.lines.entries()){const v=gVoice(s.cast[l.spk]);const b=recOn()&&AUD.files[l.id]?await (await fetch(AUD.files[l.id])).blob():await gAudio(l.de,v,sec=>progress(`Fetched ${n} of ${total}. Google asked to wait ${sec} s…`));
+  for(const [li,l] of s.lines.entries()){const b=recOn()&&AUD.files[l.id]?await (await fetch(AUD.files[l.id])).blob():await lineBlob(l.de,s.cast[l.spk],sec=>progress(`Fetched ${n} of ${total}. Google asked to wait ${sec} s…`));
    const ext=/wav/.test(b.type)?'wav':/ogg/.test(b.type)?'ogg':'mp3';const name=`${dir}/${String(li+1).padStart(2,'0')}-${l.spk}.${ext}`;
    files.push({name,data:new Uint8Array(await b.arrayBuffer())});txt+=`  ${String(li+1).padStart(2,'0')}  ${l.spk}: ${l.de}\n      ${l.en}\n`;n++;progress(`Collected ${n} of ${total} lines…`)}
   txt+='\n'}
- files.push({name:'transcript.txt',data:enc.encode(`German Dashboard: story audio (${GC.provider==='gemini'?'Gemini':'Google Cloud'} voices: Sophie = ${gVoice('f')}, Moritz = ${gVoice('m')})\n\n`+txt)});
+ files.push({name:'transcript.txt',data:enc.encode(`German Dashboard: story audio (${ttsName()} voices: Sophie = ${voiceLabel('f')}, Moritz = ${voiceLabel('m')})\n\n`+txt)});
  const a=document.createElement('a');a.href=URL.createObjectURL(makeZip(files));a.download='German stories – audio.zip';document.body.appendChild(a);a.click();a.remove();
  return n}
 const gPlayer=new Audio();gPlayer.preservesPitch=true;let gPending=null;
-function sayGoogle(l,s,r){return new Promise(async(res,rej)=>{try{gStop();const g=s.cast[l.spk]||'f';const b=await gAudio(l.de,gVoice(g));const url=URL.createObjectURL(b);
+function sayGoogle(l,s,r){return new Promise(async(res,rej)=>{try{gStop();const g=s.cast[l.spk]||'f';const b=await lineBlob(l.de,g);const url=URL.createObjectURL(b);
  let done=false;const fin=()=>{if(done)return;done=true;gPending=null;URL.revokeObjectURL(url);res(gPlayer.duration||0)};gPending=fin;
  gPlayer.src=url;gPlayer.playbackRate=r;gPlayer.preservesPitch=true;gPlayer.onloadedmetadata=()=>{if(isFinite(gPlayer.duration))durCache[l.id]=gPlayer.duration};
  gPlayer.onended=fin;gPlayer.onerror=fin;await gPlayer.play().catch(fin)}catch(e){rej(e)}})}
@@ -164,8 +199,8 @@ const AUD=window.AUDIO||{files:{}};let useRec=LS('gd-userec',true);
 const recOn=()=>useRec&&Object.keys(AUD.files||{}).length>0;
 function sayFile(l,r){return new Promise(async res=>{gStop();let done=false;const fin=()=>{if(done)return;done=true;gPending=null;res(gPlayer.duration||0)};gPending=fin;
  gPlayer.src=AUD.files[l.id];gPlayer.playbackRate=r;gPlayer.preservesPitch=true;gPlayer.onloadedmetadata=()=>{if(isFinite(gPlayer.duration))durCache[l.id]=gPlayer.duration};gPlayer.onended=fin;gPlayer.onerror=fin;await gPlayer.play().catch(fin)})}
-async function say(l,s,r=rate){if(recOn()&&AUD.files[l.id])return sayFile(l,r);if(gOn()){try{const d=await sayGoogle(l,s,r);GC.err='';return d}catch(e){GC.err=e.message||String(e);showGErr()}}return sayBrowser(l,s,r)}
-function showGErr(){const b=q('#gerr');if(b){b.hidden=!GC.err;b.textContent='Google voice problem: '+GC.err+' Using the browser voice instead for now.'}}
+async function say(l,s,r=rate){if(recOn()&&AUD.files[l.id])return sayFile(l,r);if(ttsOn()){try{const d=await sayGoogle(l,s,r);GC.err='';showGErr();return d}catch(e){GC.err=e.message||String(e);showGErr()}}return sayBrowser(l,s,r)}
+function showGErr(){const b=q('#gerr');if(b){const m=EL.err||GC.err;b.hidden=!m;b.textContent='Voice problem: '+m+(EL.err&&gOn()?' Using the Gemini voice instead for now.':' Using the browser voice instead for now.')}}
 const estDur=l=>durCache[l.id]||Math.max(1,l.de.split(/\s+/).length*0.42);
 
 /* ---------- unlocking ---------- */
@@ -176,7 +211,7 @@ const unlocked=s=>opened[s.id]||started(s)>=25;
 /* ---------- storage ---------- */
 const idb=new Promise(res=>{try{const r=indexedDB.open('german-dialogues',2);r.onupgradeneeded=()=>{const d=r.result;if(!d.objectStoreNames.contains('sessions'))d.createObjectStore('sessions',{keyPath:'id'});if(!d.objectStoreNames.contains('tts'))d.createObjectStore('tts')};r.onsuccess=()=>res(r.result);r.onerror=()=>res(null)}catch(e){res(null)}});
 const tx=(mode,fn)=>idb.then(d=>d?new Promise((res,rej)=>{const t=d.transaction('sessions',mode);const out=fn(t.objectStore('sessions'));t.oncomplete=()=>res(out&&out.result);t.onerror=()=>rej(t.error)}):Promise.reject('no-db'));
-const allSessions=()=>tx('readonly',s=>s.getAll()).then(r=>(r||[]).filter(x=>ST.some(s=>s.id===x.storyId)&&(!x.profile||x.profile===window.PROFILE)).sort((a,b)=>b.date-a.date)).catch(()=>[]);
+const allSessions=()=>tx('readonly',s=>s.getAll()).then(r=>(r||[]).filter(x=>ST.some(s=>s.id===x.storyId)&&(!x.profile||String(x.profile).toLowerCase()===String(window.PROFILE||'').toLowerCase())).sort((a,b)=>b.date-a.date)).catch(()=>[]);
 let best={};try{best=JSON.parse(localStorage.getItem('gd-best2')||'{}')}catch(e){}
 
 /* ---------- recording + speech recognition ---------- */
@@ -222,7 +257,8 @@ async function gemTranscribe(blob){const model=await gemSttModel();const wav=awa
   if(r.status===429||r.status===503){await sleep((a+1)*4000);continue}
   const j=await gJSON(r);return (((j.candidates||[])[0]||{}).content||{parts:[]}).parts.map(x=>x.text||'').join(' ').replace(/\s+/g,' ').trim()}
  throw new Error('Google is busy (rate limit); try again in a moment')}
-async function transcribe(rec){rec.by='';
+async function transcribe(rec,line){rec.by='';
+ if(azOn()&&line){try{const j=await azAssess(rec.blob,line);const nb=(j.NBest||[])[0];if(j.RecognitionStatus==='Success'&&nb){rec.az=nb;rec.alts=[[j.DisplayText||nb.Display||'']];rec.by='Azure';return}rec.aerr='Azure heard no speech ('+(j.RecognitionStatus||'no result')+')'}catch(e){rec.aerr='Azure: '+(e.message||String(e))}}
  if(gemReady()){try{const t=await gemTranscribe(rec.blob);if(t&&/[\p{L}]/u.test(t)){rec.alts=[[t]];rec.by='Gemini';return}rec.gempty=true}catch(e){rec.gerr=e.message||String(e)}}
  if(rec.alts&&rec.alts.length)rec.by='Chrome'}
 /* ---------- marking: always against the line this recording was made for ---------- */
@@ -252,9 +288,19 @@ function rhythm(env,line){ // speaking time compared with the reference reading,
  const ref=estDur(line),ratio=dur/ref;
  const pace=ratio<0.6?Math.round(100*ratio/0.6):ratio<=1.7?100:Math.max(0,Math.round(100-(ratio-1.7)*90));
  return {score:Math.max(0,Math.min(100,pace-pauses*10)),dur,ref,pauses}}
+function azScore(line,rec){const nb=rec.az,pa=nb.PronunciationAssessment||nb;
+ const AW=(nb.Words||[]).map(w=>{const p=w.PronunciationAssessment||w;return {w:norm(w.Word||'').join(' '),acc:p.AccuracyScore,err:p.ErrorType||'None'}}).filter(x=>x.err!=='Insertion'&&x.w);
+ const T=norm(line.de),names=line.tok.map(t=>!!t.name);let j=0;const st=[],vals=[],accs=[];
+ T.forEach((t,i)=>{let hit=-1;for(let k=j;k<Math.min(AW.length,j+4);k++){if(sim(t,AW[k].w)>=.6){hit=k;break}}
+  let s='miss',v=0;if(hit>=0){const a=AW[hit];j=hit+1;if(a.err!=='Omission'){v=a.acc==null?100:a.acc;s=v>=80&&a.err!=='Mispronunciation'?'ok':v>=50?'close':'miss'}}
+  if(names[i]&&s!=='ok')s='name';st.push(s);accs.push(s==='name'?null:Math.round(v));if(s!=='name')vals.push(v)});
+ const words=vals.length?Math.round(vals.reduce((a,b)=>a+b,0)/vals.length):0,fl=pa.FluencyScore==null?null:Math.round(pa.FluencyScore);
+ const total=Math.round(fl==null?words:.85*words+.15*fl);
+ return {words,status:st,acc:accs,heard:(rec.alts[0]||[''])[0],rhythm:fl,rh:null,total,by:'Azure',comp:pa.CompletenessScore==null?null:Math.round(pa.CompletenessScore)}}
 function scoreTake(line,rec){
+ if(rec.az)return azScore(line,rec);
  const w=markWords(line,rec.alts),rh=rhythm(rec.env,line);
- const why=[rec.gerr?'Gemini: '+rec.gerr:'',rec.gempty?'Gemini heard no speech':'','Chrome recogniser: '+((rec.diag||[]).join(', ')||'no response')].filter(Boolean).join(' · ');
+ const why=[rec.aerr||'',rec.gerr?'Gemini: '+rec.gerr:'',rec.gempty?'Gemini heard no speech':'','Chrome recogniser: '+((rec.diag||[]).join(', ')||'no response')].filter(Boolean).join(' · ');
  if(!w||!w.heard)return {words:null,rhythm:rh?rh.score:null,total:null,status:null,heard:'',rh,by:rec.by||'',why};
  const total=Math.round(rh?.85*w.score+.15*rh.score:w.score);
  return {words:w.score,status:w.status,heard:w.heard,rhythm:rh?rh.score:null,rh,total,by:rec.by||''};
@@ -273,37 +319,45 @@ function bindRate(){qa('#rate button').forEach(b=>b.onclick=()=>{rate=RATES[b.da
 function voicePanel(){const vs=voices();const f=pick('f'),m=pick('m');
  const opt=(cur)=>vs.map(v=>`<option ${cur&&v.name===cur.name?'selected':''}>${esc(v.name)}</option>`).join('');
  const gopt=g=>{const cur=gVoice(g);return gList(g).concat(gAll().filter(v=>!gList(g).includes(v))).map(v=>`<option ${v.name===cur?'selected':''} value="${esc(v.name)}">${esc(v.name.replace('de-DE-',''))}${v.ssmlGender==='FEMALE'?' (female)':v.ssmlGender==='MALE'?' (male)':''}</option>`).join('')};
+ const elopt=g=>{const cur=(elVoice(g)||{}).id;return EL.voices.map(v=>`<option value="${esc(v.id)}" ${v.id===cur?'selected':''}>${esc(v.name)}${v.g?' ('+esc(v.g)+')':''}${v.cat==='generated'?' · your design':v.cat==='premade'?' · default':''}</option>`).join('')};
+ const inp=(id,ph,type='password')=>`<input id="${id}" type="${type}" placeholder="${ph}" autocomplete="off" autocapitalize="off" spellcheck="false" style="font:15px Georgia,serif;padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--ink);min-width:240px;max-width:100%">`;
  const nrec=Object.keys(AUD.files||{}).length;
- const gem=GC.provider==='gemini',connected=GC.key&&(gem?GC.model:GC.voices.length);
- const using=recOn()?`Recorded: ${esc(AUD.voices&&AUD.voices.f||'')} and ${esc(AUD.voices&&AUD.voices.m||'')}`:gOn()?`${gem?'Gemini':'Google Cloud'}: ${esc((gVoice('f')||'').replace('de-DE-',''))} and ${esc((gVoice('m')||'').replace('de-DE-',''))}`:`Browser: ${esc(f?f.name:'none')} and ${esc(m?m.name:'none')}`;
- return `<details ${gOn()?'':'open'}><summary><b>Voices</b> <span class="note">${using}</span></summary>
- ${nrec?`<h3 style="font-size:18px;margin-top:12px">Recorded story voices</h3><label class="tog" style="margin:6px 0"><input type="checkbox" id="userec" ${useRec?'checked':''}> Use the recorded voices for the stories (${esc(AUD.voices&&AUD.voices.f||'')} and ${esc(AUD.voices&&AUD.voices.m||'')}, ${nrec} lines). Same on every device, and uses none of your Gemini limit.</label><h3 style="font-size:18px;margin-top:14px">Gemini (marks your speaking${nrec?'':' and reads the stories'})</h3>`:''}
- <div class="pills" style="margin:12px 0 6px"><button class="pill" data-prov="gemini" aria-pressed="${gem}">Gemini voices (easiest)</button><button class="pill" data-prov="cloud" aria-pressed="${!gem}">Google Cloud voices</button></div>
- ${connected?`
-  <label class="tog" style="margin:6px 0"><input type="checkbox" id="gon" ${GC.enabled?'checked':''}> Use ${gem?'Gemini':'Google Cloud'} voices${gem?` <span class="note">(model ${esc(GC.model)})</span>`:''}</label>
-  <div class="ctrls" style="margin-top:6px"><label>Sophie <select id="gf">${gopt('f')}</select></label><button class="iconb" id="gtf">▶ Test</button><label>Moritz <select id="gm">${gopt('m')}</select></label><button class="iconb" id="gtm">▶ Test</button></div>
-  <div class="ctrls" style="margin-top:8px"><button class="btn" id="gprep">Prepare all stories</button><button class="btn" id="gzip">Download all audio (.zip)</button><span class="note" id="gprog">Fetches every line once and keeps it on this Mac, so playback is instant and works offline.${gem?' On a free key this goes at Google’s pace and may pause.':''}</span></div>
-  <p class="note"><button class="link" id="gkeyx">Change or remove API key</button></p>`
- :gem?`<ol class="note" style="font-size:15px;padding-left:20px;margin:6px 0">
-   <li>Go to <b>aistudio.google.com</b> and sign in with your Google account.</li>
-   <li>Click <b>Get API key</b>, then <b>Create API key</b>, and copy it.</li>
-   <li>Paste it below and click <b>Connect</b>. It's stored only in this browser on your Mac.</li></ol>
-   <p class="note">No billing is needed. Free keys have a daily limit on speech, so the app keeps every line it fetches and never asks for the same line twice.</p>
-  <div class="ctrls"><input id="gkey" type="password" placeholder="Paste your Gemini API key" autocomplete="off" style="font:15px Georgia,serif;padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--ink);min-width:300px"><button class="btn pri" id="gconnect">Connect</button><span class="note" id="gmsg"></span></div>`
- :`<ol class="note" style="font-size:15px;padding-left:20px;margin:6px 0">
-   <li>Go to <b>console.cloud.google.com</b> and create a project.</li>
-   <li>Under <b>Billing</b>, link a billing account (Google asks for one even when usage stays inside the free allowance).</li>
-   <li>Under <b>APIs &amp; Services › Library</b>, enable <b>Cloud Text-to-Speech API</b>.</li>
-   <li>Under <b>APIs &amp; Services › Credentials</b>, choose <b>Create credentials › API key</b>. Set <b>API restrictions</b> to <i>Cloud Text-to-Speech API</i>, and leave <b>Application restrictions</b> on <i>None</i>.</li>
-   <li>Paste the key below. It's stored only in this browser on your Mac.</li></ol>
-  <div class="ctrls"><input id="gkey" type="password" placeholder="Paste your Google Cloud API key" autocomplete="off" style="font:15px Georgia,serif;padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--ink);min-width:300px"><button class="btn pri" id="gconnect">Connect</button><span class="note" id="gmsg"></span></div>`}
- ${gemReady()&&window.SITE_URL&&location.protocol==='file:'?`<h3 style="font-size:18px;margin-top:16px">Your phone and the website</h3>
+ const gemConn=GC.key&&GC.model;
+ const storyV=recOn()?`Recorded: ${esc(AUD.voices&&AUD.voices.f||'')} and ${esc(AUD.voices&&AUD.voices.m||'')}`:elOn()?`ElevenLabs: ${esc(voiceLabel('f'))} and ${esc(voiceLabel('m'))}`:gOn()?`Gemini: ${esc(gVoice('f'))} and ${esc(gVoice('m'))}`:`Browser: ${esc(f?f.name:'none')} and ${esc(m?m.name:'none')}`;
+ const marker=azOn()?'Azure':gemReady()?'Gemini':'Chrome';
+ const H=t=>`<h3 style="font-size:18px;margin-top:16px">${t}</h3>`;const OL=t=>`<ol class="note" style="font-size:15px;padding-left:20px;margin:6px 0">${t}</ol>`;
+ return `<details ${elOn()&&azOn()?'':'open'}><summary><b>Voices &amp; marking</b> <span class="note">${storyV} · marking: ${marker}</span></summary>
+ ${nrec?`${H('Recorded story voices')}<label class="tog" style="margin:6px 0"><input type="checkbox" id="userec" ${useRec?'checked':''}> Use the recorded voices for the stories (${esc(AUD.voices&&AUD.voices.f||'')} and ${esc(AUD.voices&&AUD.voices.m||'')}, ${nrec} lines). Same on every device, and uses none of your allowance.</label>`:''}
+ ${H('Story voices: ElevenLabs')}
+ ${elOn()?`<div class="ctrls" style="margin-top:6px"><label>Sophie <select id="ef">${elopt('f')}</select></label><button class="iconb" id="etf">▶ Test</button><label>Moritz <select id="em">${elopt('m')}</select></label><button class="iconb" id="etm">▶ Test</button></div>
+  <p class="note" id="elusage"></p>
+  <p class="note"><button class="link" id="elref">Refresh the voice list</button> · <button class="link" id="elx">Change or remove key</button></p>`
+ :`${OL(`<li>Sign up free at <b>elevenlabs.io</b>.</li>
+   <li>Free accounts can't use Voice Library voices from an app, so design your own two. Open <b>Voices</b>, choose <b>Create a voice › Voice Design</b>, and describe each one, for example:<br><i>“A young German woman in her twenties from an old aristocratic family in Munich. Refined, educated upper-class accent, crisp standard Hochdeutsch, warm and composed.”</i><br><i>“A German man in his late twenties from an aristocratic family. Cultivated upper-class accent, clear standard Hochdeutsch, calm, polite and confident.”</i><br>Write the preview text in German so you hear the accent, then <b>save</b> the ones you like as Sophie and Moritz.</li>
+   <li>Go to <b>Developers › API keys</b>, create a key, and allow at least <i>Text to Speech</i> and <i>Voices (read)</i>. <i>User (read)</i> lets the app show your monthly allowance.</li>
+   <li>Paste it below and click <b>Connect</b>.</li>`)}
+  <div class="ctrls">${inp('elkey','Paste your ElevenLabs API key')}<button class="btn pri" id="elconnect">Connect</button><span class="note" id="elmsg"></span></div>`}
+ ${ttsOn()?`<div class="ctrls" style="margin-top:8px"><button class="btn" id="gprep">Prepare all stories</button><button class="btn" id="gzip">Download all audio (.zip)</button><span class="note" id="gprog">Fetches every line once and keeps it on this device, so playback is instant, works offline and never uses your allowance twice.</span></div>`:''}
+ <div class="banner" id="gerr" ${EL.err||GC.err?'':'hidden'} style="margin-top:8px">${EL.err||GC.err?'Voice problem: '+esc(EL.err||GC.err):''}</div>
+ ${H('Marking your speaking: Azure')}
+ ${azOn()?`<p class="note" style="font-size:15px">Connected (region <b>${esc(AZ.region)}</b>). Each recording is scored word by word against the line you were saying: pronunciation accuracy, fluency and completeness. <button class="link" id="azx">Change or remove key</button></p>`
+ :`${OL(`<li>Sign in at <b>portal.azure.com</b> (a free Azure account is enough).</li>
+   <li>Click <b>Create a resource</b>, search for <b>Speech</b>, and create a Speech service. Pick a region near you, such as <i>UK South</i>, and the <b>Free F0</b> pricing tier.</li>
+   <li>Open the new resource, go to <b>Keys and Endpoint</b>, and copy <b>KEY 1</b> and the <b>Location/Region</b> (for example <i>uksouth</i>).</li>
+   <li>Paste both below and click <b>Connect</b>.</li>`)}
+  <div class="ctrls">${inp('azkey','Azure Speech key (KEY 1)')}${inp('azreg','Region, e.g. uksouth','text')}<button class="btn pri" id="azconnect">Connect</button><span class="note" id="azmsg"></span></div>`}
+ ${H('Gemini (backup)')}
+ ${gemConn?`<p class="note" style="font-size:15px">Connected (${esc(GC.model)}). Reads the stories only if ElevenLabs isn't connected or has a problem, and marks your speaking only if Azure isn't connected or can't hear you. <button class="link" id="gkeyx">Change or remove key</button></p>
+  <label class="tog" style="margin:6px 0"><input type="checkbox" id="gon" ${GC.enabled?'checked':''}> Use Gemini voices as a backup</label>
+  ${elOn()?'':`<div class="ctrls" style="margin-top:6px"><label>Sophie <select id="gf">${gopt('f')}</select></label><button class="iconb" id="gtf">▶ Test</button><label>Moritz <select id="gm">${gopt('m')}</select></label><button class="iconb" id="gtm">▶ Test</button></div>`}`
+ :`<p class="note" style="font-size:15px">Optional. A free key from <b>aistudio.google.com</b> (Get API key › Create API key).</p>
+  <div class="ctrls">${inp('gkey','Paste your Gemini API key')}<button class="btn pri" id="gconnect">Connect</button><span class="note" id="gmsg"></span></div>`}
+ ${anyKey()&&window.SITE_URL&&location.protocol==='file:'?`${H('Your phone and the website')}
   <p class="note" style="font-size:15px">The website is the same app, always up to date, on any phone or computer: <b>${esc(window.SITE_URL)}</b></p>
   <div class="ctrls"><button class="btn" id="qrphone">Set up a phone (QR code)</button><button class="btn" id="openweb">Open the website on this Mac with my progress</button></div>
   <div id="qrbox" style="margin-top:10px"></div>`:''}
- ${gemReady()&&location.protocol!=='file:'?`<p class="note" style="margin-top:10px"><button class="link" id="qrphone">Show a QR code to set up another phone</button></p><div id="qrbox" style="margin-top:10px"></div>`:''}
- <div class="banner" id="gerr" ${GC.err?'':'hidden'} style="margin-top:8px">${GC.err?'Google voice problem: '+esc(GC.err):''}</div>
- <h3 style="font-size:18px;margin-top:16px">Browser voice (backup)</h3>
+ ${anyKey()&&location.protocol!=='file:'?`<p class="note" style="margin-top:10px"><button class="link" id="qrphone">Show a QR code to set up another phone</button></p><div id="qrbox" style="margin-top:10px"></div>`:''}
+ ${H('Browser voice (last resort)')}
  ${vs.length?`<div class="ctrls" style="margin-top:6px"><label>Sophie <select id="vf">${opt(f)}</select></label><button class="iconb" id="tf">▶ Test</button><label>Moritz <select id="vm">${opt(m)}</select></label><button class="iconb" id="tm">▶ Test</button></div>`:'<p class="note">No German browser voice found.</p>'}
  </details>`}
 const TF={id:'t1',spk:'Sophie',de:'Guten Tag! Ich bin Sophie, von der Zeitung.'},TM={id:'t2',spk:'Moritz',de:'Guten Tag! Ich bin Moritz. Und das ist das Schloss.'},TC={cast:{Sophie:'f',Moritz:'m'}};
@@ -314,6 +368,22 @@ function bindVoices(){const sv=(g,el)=>{VO[g]=el.value;localStorage.setItem('gd-
   try{if(GC.provider==='gemini'){GC.model=await gemFindModel(k)}else{const v=await gFetchVoices(k);if(!v.length)throw new Error('Google returned no German voices.');GC.voices=v}GC.key=k;GC.enabled=true;GC.err='';saveGC();home()}
   catch(e){gc.disabled=false;q('#gmsg').textContent='Could not connect: '+(e.message||e)}};
  qa('[data-prov]').forEach(b=>b.onclick=()=>{if(GC.provider===b.dataset.prov)return;GC.provider=b.dataset.prov;GC.key='';GC.voices=[];GC.model='';saveGC();home()});
+ const twoClick=(el,fn)=>{if(!el)return;el.onclick=()=>{if(el.dataset.c)fn();else{el.dataset.c=1;el.textContent='Click again to remove it (saved audio stays)'}}};
+ const ec=q('#elconnect');if(ec)ec.onclick=async()=>{const k=q('#elkey').value.trim();if(!k){q('#elmsg').textContent='Paste the key first.';return}
+  ec.disabled=true;q('#elmsg').textContent='Connecting to ElevenLabs…';
+  try{const v=await elFetchVoices(k);if(!v.length)throw new Error('there are no voices on this account yet');EL.key=k;EL.voices=v;EL.err='';EL.pick={f:elVoice('f'),m:elVoice('m')};saveEL();home()}
+  catch(e){ec.disabled=false;q('#elmsg').textContent='Could not connect: '+(e.message||e)}};
+ const ef=q('#ef'),em=q('#em');if(ef){const setp=(g,sel)=>{const v=EL.voices.find(x=>x.id===sel.value);if(v){EL.pick[g]={id:v.id,name:v.name};saveEL()}};ef.onchange=()=>setp('f',ef);em.onchange=()=>setp('m',em);
+  const tEL=async(line,g)=>{stopAll();try{const b=await elAudio(line.de,g);gPlayer.src=URL.createObjectURL(b);gPlayer.playbackRate=1;await gPlayer.play();EL.err=''}catch(e){EL.err=e.message||String(e)}showGErr()};
+  q('#etf').onclick=()=>tEL(TF,'f');q('#etm').onclick=()=>tEL(TM,'m');
+  elUsage().then(u=>{const e=q('#elusage');if(e&&u)e.textContent=`Allowance: ${u.used.toLocaleString()} of ${u.limit.toLocaleString()} characters used this month. All four stories together need about 2,800, and each line is only fetched once per device.`})}
+ const er=q('#elref');if(er)er.onclick=async()=>{try{EL.voices=await elFetchVoices(EL.key);saveEL();home()}catch(e){EL.err=e.message||String(e);showGErr()}};
+ twoClick(q('#elx'),()=>{EL.key='';EL.voices=[];EL.pick={};EL.err='';saveEL();home()});
+ const ac=q('#azconnect');if(ac)ac.onclick=async()=>{const k=q('#azkey').value.trim(),reg=q('#azreg').value.trim().toLowerCase().replace(/[\s_-]+/g,'');if(!k||!reg){q('#azmsg').textContent='Paste the key and the region.';return}
+  ac.disabled=true;q('#azmsg').textContent='Checking with Azure…';
+  try{const j=await azPost(pcmToWav(new Uint8Array(16000),16000),'Hallo',k,reg);if(!j||!j.RecognitionStatus)throw new Error('unexpected answer from Azure');AZ.key=k;AZ.region=reg;saveAZ();home()}
+  catch(e){ac.disabled=false;const msg=e.message||String(e);q('#azmsg').textContent='Could not connect: '+msg+(/fetch|network|load failed/i.test(msg)?' (check the region is spelled like uksouth or westeurope)':'')}};
+ twoClick(q('#azx'),()=>{AZ.key='';AZ.region='';saveAZ();home()});
  const gon=q('#gon');if(gon)gon.onchange=()=>{GC.enabled=gon.checked;saveGC();home()};
  const gf=q('#gf'),gm=q('#gm');const P=()=>GC.pick[GC.provider]=GC.pick[GC.provider]||{};if(gf){gf.onchange=()=>{P().f=gf.value;saveGC()};gm.onchange=()=>{P().m=gm.value;saveGC()};
   q('#gtf').onclick=async()=>{stopAll();try{await sayGoogle(TF,TC,1);GC.err='';showGErr()}catch(e){GC.err=e.message;showGErr()}};
@@ -321,18 +391,18 @@ function bindVoices(){const sv=(g,el)=>{VO[g]=el.value;localStorage.setItem('gd-
  const gx=q('#gkeyx');if(gx)gx.onclick=()=>{if(gx.dataset.c){GC.key='';GC.voices=[];GC.model='';GC.sttModel='';try{localStorage.removeItem('gd-gstt')}catch(e){}saveGC();home()}else{gx.dataset.c=1;gx.textContent='Click again to remove the key (cached audio stays)'}};
 
  const ur=q('#userec');if(ur)ur.onchange=()=>{useRec=ur.checked;try{localStorage.setItem('gd-userec',JSON.stringify(useRec))}catch(e){}home()};
- const setupData=withProgress=>{const d={p:GC.provider,k:GC.key,m:GC.model||undefined,v:GC.pick[GC.provider]||undefined};
+ const setupData=withProgress=>{const d={p:'gemini',k:GC.key||undefined,m:GC.model||undefined,v:GC.pick.gemini||undefined,e:EL.key?{k:EL.key,v:{f:elVoice('f'),m:elVoice('m')}}:undefined,a:azOn()?{k:AZ.key,r:AZ.region}:undefined};
   if(withProgress&&window.PROFILE){try{d.n=window.PROFILE;d.s=JSON.parse(localStorage.getItem('de100-srs')||'null');d.o=JSON.parse(localStorage.getItem('gd-opened2')||'null')}catch(e){}}
   return btoa(unescape(encodeURIComponent(JSON.stringify(d)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')};
  const site=()=>(window.SITE_URL||location.href.split('#')[0]);
  const qp=q('#qrphone');if(qp)qp.onclick=()=>{const url=site()+'#setup='+setupData(false);const box=q('#qrbox');
-  const draw=()=>{try{const qr=qrcode(0,'L');qr.addData(url);qr.make();box.innerHTML=`<div style="background:#fff;display:inline-block;padding:10px;border-radius:8px">${qr.createSvgTag({cellSize:5,margin:2})}</div><p class="note" style="font-size:15px">Scan this with the phone's camera and open the link. It connects that phone to your Gemini key; the key stays on the phone and is never put on the website. Anyone you show it to can use your key.</p>`}catch(e){box.innerHTML='<p class="note">Could not draw the QR code.</p>'}};
+  const draw=()=>{try{const qr=qrcode(0,'L');qr.addData(url);qr.make();box.innerHTML=`<div style="background:#fff;display:inline-block;padding:10px;border-radius:8px">${qr.createSvgTag({cellSize:5,margin:2})}</div><p class="note" style="font-size:15px">Scan this with the phone's camera and open the link. It connects that phone to your ElevenLabs, Azure and Gemini keys; they stay on the phone and are never put on the website. Anyone you show it to can use your keys.</p>`}catch(e){box.innerHTML='<p class="note">Could not draw the QR code.</p>'}};
   if(window.qrcode)draw();else{const sc=document.createElement('script');sc.src='https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js';sc.onload=draw;sc.onerror=()=>{box.innerHTML='<p class="note">The QR code needs an internet connection.</p>'};document.head.appendChild(sc)}};
  const ow=q('#openweb');if(ow)ow.onclick=()=>{const a=document.createElement('a');a.href=site()+'#setup='+setupData(true);a.target='_blank';a.rel='noopener';document.body.appendChild(a);a.click();a.remove()};
  const gz=q('#gzip');if(gz)gz.onclick=async()=>{gz.disabled=true;const msg=t=>{const e=q('#gprog');if(e)e.textContent=t};
   try{const n=await exportAudio(msg);msg(`Saved ${n} audio files and a transcript to your Downloads as “German stories – audio.zip”.`)}catch(e){msg('Download stopped: '+(e.message||e))}gz.disabled=false};
  const gp=q('#gprep');if(gp)gp.onclick=async()=>{gp.disabled=true;const all=[];ST.forEach(s=>s.lines.forEach(l=>all.push([l,s.cast[l.spk]])));let n=0;
-  try{for(const [l,g] of all){await gAudio(l.de,gVoice(g),sec=>{q('#gprog').textContent=`Prepared ${n} of ${all.length} lines. Google asked to wait ${sec} s…`});n++;q('#gprog').textContent=`Prepared ${n} of ${all.length} lines…`}q('#gprog').textContent=`All ${all.length} lines are ready on this Mac.`}
+  try{for(const [l,g] of all){await lineBlob(l.de,g,sec=>{q('#gprog').textContent=`Prepared ${n} of ${all.length} lines. Google asked to wait ${sec} s…`});n++;q('#gprog').textContent=`Prepared ${n} of ${all.length} lines…`}q('#gprog').textContent=`All ${all.length} lines are ready on this Mac.`}
   catch(e){q('#gprog').textContent=`Stopped after ${n} lines: ${e.message||e}`}gp.disabled=false};
 }
 
@@ -389,7 +459,7 @@ function speak(){
  root.innerHTML=head(s,'speak')+`<div class="dstage">
   <div class="dprog">${s.lines.map((x,k)=>`<i class="${k<n?'pd':k===n?'pc':''}"></i>`).join('')}</div>
   <div class="note" style="margin:0">Line ${n+1} of ${s.lines.length} · ${my?'<b style="color:var(--green2)">Your turn: say this line</b>':esc(l.spk)+' says:'}</div>
-  <div class="msg ${s.cast[l.spk]}" style="cursor:default">${avatar(s,l)}<div class="bub"><div class="sp">${esc(l.spk)}</div><div class="bigline" id="line">${lineHTML(l,s,take&&take.sc.status)}</div><div class="en">${esc(l.en)}</div></div></div>
+  <div class="msg ${s.cast[l.spk]}" style="cursor:default">${avatar(s,l)}<div class="bub"><div class="sp">${esc(l.spk)}</div><div class="bigline" id="line">${lineHTML(l,s,take&&take.sc.status,take&&take.sc.acc)}</div><div class="en">${esc(l.en)}</div></div></div>
   ${my?`<div class="ctrls"><button class="btn" id="hear">▶ Listen</button>${rateSel()}<button class="btn rec" id="rec">● ${take?'Record again':'Record'}</button><button class="btn" id="me" ${take?'':'disabled'}>▶ My recording</button></div>
   <div class="meter"><i id="lvl"></i></div>
   <div id="sc">${take?scoreBlock(take.sc):'<p class="note">Listen, then press <b>Record</b> and say the line. Recording stops by itself when you pause.</p>'}</div>
@@ -406,7 +476,7 @@ function speak(){
  if(!take)say(l,s);
  let R=null;const rb=q('#rec');
  const stop=async()=>{if(!R)return;const r=R;R=null;rb.classList.remove('on');rb.disabled=true;rb.textContent='Marking…';
-  try{const rec=await r.stop();await transcribe(rec);const sc=scoreTake(l,rec);const old=sess.takes[l.id];if(old)URL.revokeObjectURL(old.url);
+  try{const rec=await r.stop();await transcribe(rec,l);const sc=scoreTake(l,rec);const old=sess.takes[l.id];if(old)URL.revokeObjectURL(old.url);
    sess.takes[l.id]={lineId:l.id,blob:rec.blob,url:URL.createObjectURL(rec.blob),sc};speak()}
   catch(e){rb.disabled=false;rb.textContent='● Record';q('#sc').innerHTML=`<div class="banner">Something went wrong (${esc(e.message||e)}). Please try again.</div>`}};
  rb.onclick=async()=>{if(R)return stop();stopAll();
@@ -415,11 +485,11 @@ function speak(){
  if(take)q('#me').onclick=()=>{stopAll();player.src=take.url;player.play()};
 }
 function scoreBlock(sc){
- if(sc.total==null)return `<div class="banner">No words could be recognised in that recording, so it can't be marked yet. Your recording itself is fine: press ▶ My recording to hear it.${gemReady()?'':' Connecting a Gemini key in the Voices panel (Dialogues home page) lets Gemini transcribe your recordings, which works far more reliably here than Chrome’s built-in recogniser.'}<br><span class="note">Details: ${esc(sc.why||'')}</span></div>`;
+ if(sc.total==null)return `<div class="banner">No words could be recognised in that recording, so it can't be marked yet. Your recording itself is fine: press ▶ My recording to hear it.${azOn()||gemReady()?'':' Connect Azure in the Voices &amp; marking panel (Dialogues home page) to have your recordings marked.'}<br><span class="note">Details: ${esc(sc.why||'')}</span></div>`;
  const tip=sc.total>=90?'Excellent!':sc.total>=75?'Good. Look at any amber or red words, then try again if you like.':sc.total>=55?'Getting there. Listen on Slow, then try again.':'Try again: listen on Slow and say it word by word.';
  const r=sc.rh;const rnote=r?`You took ${r.dur.toFixed(1)} s; the reading takes about ${r.ref.toFixed(1)} s${r.pauses?`, with ${r.pauses} long pause${r.pauses>1?'s':''}`:''}.`:'';
- return `<div class="scores">${ring(sc.total)}<div class="sc"><b>${sc.words}%</b><span>Words said correctly</span></div><div class="sc"><b>${sc.rhythm==null?'–':sc.rhythm+'%'}</b><span>Pace and flow</span></div><div class="sc heard">Heard${sc.by?' ('+esc(sc.by)+')':''}: <b>${esc(sc.heard||'…')}</b></div></div>
- <p class="note">${tip} Green: said correctly · amber: nearly · red: missed or wrong. ${rnote}</p>`;
+ return `<div class="scores">${ring(sc.total)}<div class="sc"><b>${sc.words}%</b><span>${sc.by==='Azure'?'Pronunciation accuracy':'Words said correctly'}</span></div><div class="sc"><b>${sc.rhythm==null?'–':sc.rhythm+'%'}</b><span>${sc.by==='Azure'?'Fluency':'Pace and flow'}</span></div><div class="sc heard">Heard${sc.by?' ('+esc(sc.by)+')':''}: <b>${esc(sc.heard||'…')}</b></div></div>
+ <p class="note">${tip} ${sc.by==='Azure'?'Green: well pronounced · amber: understandable but off · red: mispronounced or missed. Tap a word to see its score.':'Green: said correctly · amber: nearly · red: missed or wrong.'} ${rnote}</p>`;
 }
 function fromSaved(x){const takes={};x.lines.forEach(l=>{if(l.blob)takes[l.id]={lineId:l.id,blob:l.blob,url:URL.createObjectURL(l.blob),sc:l.sc}});return {id:x.id,storyId:x.storyId,role:x.role,takes,done:true,saved:true,cur:0}}
 function results(){
@@ -431,8 +501,8 @@ function results(){
   <div class="note" style="font-size:15px">${sess.role==='all'?'Every line':esc(sess.role)+"'s part"} · average over your ${mineLines.length} lines${best[s.id]!=null?' · best '+best[s.id]+'%':''}</div>
   <div class="ctrls" style="margin-top:10px"><button class="btn pri" id="pd">▶ Play my dialogue</button><button class="btn" id="save" ${sess.saved?'disabled':''}>${sess.saved?'Saved':'Save dialogue'}</button><button class="btn" id="dl">Download (.wav)</button><button class="btn" id="again">Practise again</button></div>
   <p class="note" id="msg"></p></div></div>
- <p class="note">Your lines play in your own voice; the other character's lines are read to you. The download contains your lines${gOn()?' and the Google voice for the other lines':''}.</p>
- <div>${s.lines.map((l,n)=>{const t=sess.takes[l.id],m=mine(s,l);return `<div class="rl" data-n="${n}"><div class="sp">${m?'You ('+esc(l.spk)+')':esc(l.spk)}</div><div><div class="dl">${lineHTML(l,s,t&&t.sc.status)}</div><div class="note" style="margin:2px 0 0">${esc(l.en)}</div>${t&&t.sc.heard?`<div class="heard">Heard: <b>${esc(t.sc.heard)}</b></div>`:''}</div><div class="s" style="color:${col(t?t.sc.total:null)}">${m?(t&&t.sc.total!=null?t.sc.total+'%':'–'):''}</div><div class="ctrls">${t?`<button class="iconb" data-me="${n}">▶ Me</button>`:''}<button class="iconb" data-or="${n}">▶ Reading</button></div></div>`}).join('')}</div>
+ <p class="note">Your lines play in your own voice; the other character's lines are read to you. The download contains your lines${ttsOn()?' and the story voice for the other lines':''}.</p>
+ <div>${s.lines.map((l,n)=>{const t=sess.takes[l.id],m=mine(s,l);return `<div class="rl" data-n="${n}"><div class="sp">${m?'You ('+esc(l.spk)+')':esc(l.spk)}</div><div><div class="dl">${lineHTML(l,s,t&&t.sc.status,t&&t.sc.acc)}</div><div class="note" style="margin:2px 0 0">${esc(l.en)}</div>${t&&t.sc.heard?`<div class="heard">Heard: <b>${esc(t.sc.heard)}</b></div>`:''}</div><div class="s" style="color:${col(t?t.sc.total:null)}">${m?(t&&t.sc.total!=null?t.sc.total+'%':'–'):''}</div><div class="ctrls">${t?`<button class="iconb" data-me="${n}">▶ Me</button>`:''}<button class="iconb" data-or="${n}">▶ Reading</button></div></div>`}).join('')}</div>
  <div class="gloss" id="gloss">Hover over or tap a word to see what it means.</div>`;
  bindHead(i);bindGloss();const rows=qa('.rl');
  const playUrl=u=>new Promise(res=>{player.src=u;player.onended=()=>res();player.onerror=()=>res();player.play().catch(()=>res())});
@@ -450,7 +520,7 @@ function results(){
   catch(e){q('#msg').textContent='Saving was blocked here. Use Download to keep your recordings.'}};
  q('#dl').onclick=async()=>{q('#msg').textContent='Building the file…';try{
   const SRo=24000,parts=[];
-  for(const l of s.lines){const t=sess.takes[l.id];let blob=null;if(t&&mine(s,l))blob=t.blob;else if(recOn()&&AUD.files[l.id]){try{blob=await (await fetch(AUD.files[l.id])).blob()}catch(e){blob=null}}else if(gOn()){try{blob=await gAudio(l.de,gVoice(s.cast[l.spk]))}catch(e){blob=null}}if(!blob)continue;const b=await AC().decodeAudioData(await blob.arrayBuffer());
+  for(const l of s.lines){const t=sess.takes[l.id];let blob=null;if(t&&mine(s,l))blob=t.blob;else if(recOn()&&AUD.files[l.id]){try{blob=await (await fetch(AUD.files[l.id])).blob()}catch(e){blob=null}}else if(ttsOn()){try{blob=await lineBlob(l.de,s.cast[l.spk])}catch(e){blob=null}}if(!blob)continue;const b=await AC().decodeAudioData(await blob.arrayBuffer());
    const oc=new OfflineAudioContext(1,Math.max(1,Math.ceil(b.duration*SRo)),SRo);const src=oc.createBufferSource();src.buffer=b;src.connect(oc.destination);src.start();parts.push((await oc.startRendering()).getChannelData(0));parts.push(new Float32Array(Math.round(SRo*.4)))}
   if(!parts.length){q('#msg').textContent='No recordings yet.';return}
   const len=parts.reduce((a,p)=>a+p.length,0),pcm=new Float32Array(len);let o=0;parts.forEach(p=>{pcm.set(p,o);o+=p.length});
@@ -460,6 +530,7 @@ function results(){
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([buf],{type:'audio/wav'}));a.download=`Story ${i+1} ${s.title} – my lines.wav`;document.body.appendChild(a);a.click();a.remove();q('#msg').textContent='Downloaded.'}
   catch(e){q('#msg').textContent="Couldn't build the file: "+(e.message||e)}};
 }
+if(EL.key&&!EL.voices.length){elFetchVoices(EL.key).then(v=>{EL.voices=v;saveEL();if(view.name==='home'&&root.innerHTML)home()}).catch(e=>{EL.err=e.message||String(e)})}
 if(GC.provider==='gemini'&&GC.key&&!GC.model){gemFindModel(GC.key).then(m=>{GC.model=m;saveGC();if(view.name==='home'&&root.innerHTML)home()}).catch(e=>{GC.err=e.message||String(e)})}
 window.DLG={open:()=>{if(view.name==='home')home();else render()},leave:stopAll,_test:{markWords,norm,scoreTake,rhythm}};
 })();

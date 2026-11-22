@@ -103,6 +103,6 @@ window.WORDS = [
 [100,"oben","above, at the top, upstairs","added",["oben"],""]
 ];
 // Clips where a form must NOT count (e.g. "Ich meine" is the verb meinen, not "my"; "sein Ur-Ur-Uropa" is possessive)
-window.EXCLUDE = {3:["c09"],53:["c09","c23","c27","c36"]};
+window.EXCLUDE = {3:["c09","c62"],53:["c09","c23","c27","c36"]};
 // Extra forms that count only in one clip
-window.INCLUDE = {36:{c09:["sein"]}};
+window.INCLUDE = {36:{c09:["sein"],c62:["Sein"]}};
