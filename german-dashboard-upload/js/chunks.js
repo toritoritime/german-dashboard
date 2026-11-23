@@ -13,7 +13,7 @@ let mode='learn',cur=CH[0],shown=false,bi=0,placed=[],tray=[],checked=null,mine=
 /* ---------- scheduling (same idea as the word cards) ---------- */
 const st=id=>S.cards[id];
 function status(id){const c=st(id);if(!c)return 'new';if(c.s==='learning')return 'learning';return c.ivl>=21?'mastered':'learnt'}
-function schedule(c,g,now){c=c?{...c}:{s:'learning',step:0,ivl:0,ease:2.5,reps:0,lapses:0};c.reps++;c.last=now;
+function ownSchedule(c,g,now){c=c?{...c}:{s:'learning',step:0,ivl:0,ease:2.5,reps:0,lapses:0};c.reps++;c.last=now;
  if(c.s==='learning'){if(g===1){c.step=0;c.due=now+MIN}else if(g===4){c.s='review';c.ivl=4;c.due=now+4*DAY}else if(g===2){c.due=now+5*MIN}
   else if(c.step>=1){c.s='review';c.ivl=1;c.due=now+DAY}else{c.step=1;c.due=now+10*MIN}return c}
  if(g===1){c.lapses++;c.ease=Math.max(1.3,c.ease-.2);c.s='learning';c.step=0;c.due=now+10*MIN;return c}
@@ -24,6 +24,8 @@ function nextCard(){const now=Date.now();if(S.day.d!==today())S.day={d:today(),n
  const due=CH.filter(k=>{const c=st(k.id);return c&&c.due<=now}).sort((a,b)=>st(a.id).due-st(b.id).due);if(due.length)return due[0];
  if(S.day.n<S.perDay){const n=CH.find(k=>!st(k.id));if(n)return n}
  const soon=CH.filter(k=>{const c=st(k.id);return c&&c.s==='learning'&&c.due-now<20*MIN}).sort((a,b)=>st(a.id).due-st(b.id).due);return soon[0]||null}
+const sched=(c,g,now)=>window.SRS&&window.SRS.schedule?window.SRS.schedule(c,g,now):ownSchedule(c,g+1,now);
+const fmt=ms=>window.SRS&&window.SRS.fmt?window.SRS.fmt(ms):Math.round(ms/6e4)+' min';
 const counts=()=>{const n={new:0,learning:0,learnt:0,mastered:0};CH.forEach(k=>n[status(k.id)]++);return n};
 
 /* ---------- small helpers ---------- */
@@ -59,9 +61,8 @@ const css=document.createElement('style');css.textContent=`
 #chunkApp .fb{border-radius:10px;padding:12px 14px;font-size:16px;line-height:1.45;display:grid;gap:6px}
 #chunkApp .fb.ok{background:light-dark(#eef5ea,#1f2a1c);border:1px solid light-dark(#b9d3ad,#3d5636)}
 #chunkApp .fb.no{background:light-dark(#fbeeea,#2e1f1c);border:1px solid light-dark(#e3bfb4,#5a3a33)}
-#chunkApp .grades{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-#chunkApp .grades button{padding:12px 6px;font:16px Georgia,serif;border-radius:8px;border:1px solid var(--rule);background:var(--paper);color:var(--ink);cursor:pointer}
-#chunkApp .ex{display:flex;gap:8px;align-items:baseline}#chunkApp .ex .en{color:var(--mute);font-size:15px}
+#chunkApp .exl{display:flex;gap:8px;align-items:baseline}#chunkApp .exl .en2{color:var(--mute);font-size:15px}
+#chunkApp .card{max-width:820px}#chunkApp .card .big{font-size:clamp(32px,5.5vw,54px);line-height:1.12}#chunkApp .card .note{color:var(--mute);font-size:16px;margin:.3em 0 .7em}#chunkApp .card .ex b{color:var(--claret)}#chunkApp .pdl{margin:12px 2px 0;font-size:15px;color:var(--mute)}
 #chunkApp .list{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 #chunkApp .list button{font:14px Georgia,serif;padding:6px 10px;border-radius:99px;border:1px solid var(--rule);background:var(--paper);color:var(--ink);cursor:pointer;text-align:left}
 #chunkApp .list button[aria-current=true]{outline:2px solid var(--ink)}
@@ -75,7 +76,7 @@ const css=document.createElement('style');css.textContent=`
 #chunkApp .ring{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;font:700 24px Georgia,serif;border:5px solid var(--chip)}
 #chunkApp .scores{display:flex;flex-wrap:wrap;gap:14px;align-items:center}#chunkApp .sc{display:grid}#chunkApp .sc b{font-size:22px}#chunkApp .sc span{font-size:13px;color:var(--mute)}
 #chunkApp .lvl{height:6px;background:var(--rule);border-radius:9px;overflow:hidden;max-width:260px}#chunkApp .lvl i{display:block;height:100%;width:0;background:light-dark(#8b4a3c,#b0685a)}
-@media(max-width:600px){#chunkApp .big{font-size:23px}#chunkApp .blk{font-size:17px}#chunkApp .grades button{padding:12px 2px;font-size:15px}}`;document.head.appendChild(css);
+@media(max-width:600px){#chunkApp .big{font-size:23px}#chunkApp .blk{font-size:17px}}`;document.head.appendChild(css);
 
 /* ---------- views ---------- */
 function head(){const n=counts();
@@ -87,17 +88,40 @@ function chunkList(){return `<h3 style="font-size:18px;margin:22px 0 0">All ${CH
 function back(k){return `<div class="big" lang="de">${blk('*'+k.chunk)}</div>
  <div><b>Means:</b> ${esc(k.means)} <span class="note" style="display:inline">· literally “${esc(k.lit)}”</span></div>
  <div class="note" style="color:var(--ink)">${esc(k.note)}</div>
- <div style="display:grid;gap:6px">${k.ex.map(([de,en])=>`<div class="ex">${play(de)}<span lang="de"><b>${esc(de)}</b></span><span class="en">${esc(en)}</span></div>`).join('')}</div>`}
+ <div style="display:grid;gap:6px">${k.ex.map(([de,en])=>`<div class="exl">${play(de)}<span lang="de"><b>${esc(de)}</b></span><span class="en2">${esc(en)}</span></div>`).join('')}</div>`}
 
-function learn(){const k=nextCard();
- if(!k){root.innerHTML=head()+`<div class="chcard"><div class="big">All done for now.</div><p class="note">No chunks are due. New ones per day: <input id="pd" type="number" min="1" max="28" value="${S.perDay}" style="width:64px;font:16px Georgia,serif;padding:4px"> · try <b>Build</b> to practise the ones you know.</p></div>`+chunkList();bind();return}
- cur=k;const c=st(k.id);
- root.innerHTML=head()+`<div class="chcard">
-  <div class="note">${c?'Review':'New chunk'} · ${CH.indexOf(k)+1} of ${CH.length} · ${S.day.n} of ${S.perDay} new today</div>
-  <div style="font-size:22px">How do you say: <b>${esc(k.means)}</b>?</div>
-  ${shown?back(k)+`<div class="grades">${[['1','Again'],['2','Hard'],['3','Good'],['4','Easy']].map(([g,t])=>`<button data-g="${g}">${t}</button>`).join('')}</div>`:`<button class="btn pri" id="show">Show the chunk</button>`}
- </div>`+chunkList();bind();
- if(shown)hear(k.ex[0][0])}
+const LAB={new:'New',learning:'Learning',learnt:'Learnt',mastered:'Mastered'};
+function boldChunk(de,k){ // bold the words of the chunk inside an everyday example
+ const W=new Set((k.chunk.toLowerCase().match(/[\p{L}']+/gu)||[]).filter(w=>w.length>1));
+ return esc(de).replace(/[\p{L}']+/gu,w=>W.has(w.toLowerCase())?`<b>${w}</b>`:w)}
+function exampleOf(k){const x=k.ctx.find(c=>c.kind==='exact');
+ if(x&&CL[x.c]){const c=CL[x.c];return {html:hl(c.de,x.note).replace(/<mark class="chm">/g,'<b>').replace(/<\/mark>/g,'</b>'),en:c.en,spk:c.spk,src:'Said in the documentary'}}
+ const [de,en]=k.ex[0];return {html:boldChunk(de,k),en,spk:'',src:k.ctx.length?'Everyday example · the documentary has a close relative under Hear it in context':'Everyday example · this chunk isn’t spoken in the documentary'}}
+const perDayCtl=()=>`<p class="pdl">New phrases per day: <input id="pd" type="number" min="1" max="28" value="${S.perDay}" style="width:60px;font:15px Georgia,serif;padding:3px 6px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--ink)"></p>`;
+function learn(){const now=Date.now(),k=nextCard();if(S.day.d!==today())S.day={d:today(),n:0};
+ const dueN=CH.filter(x=>{const c=st(x.id);return c&&c.due<=now}).length,newLeft=Math.max(0,Math.min(S.perDay-S.day.n,CH.filter(x=>!st(x.id)).length));
+ if(!k){const nx=CH.map(x=>st(x.id)).filter(Boolean).sort((a,b)=>a.due-b.due)[0],allNew=CH.filter(x=>!st(x.id)).length;
+  root.innerHTML=head()+`<div class="card"><div class="done"><h2>Gut gemacht.</h2><p style="color:var(--mute)">No phrases are due right now.${nx?` Next review in ${fmt(nx.due-now)}.`:''}</p>${allNew?`<button class="btn pri" id="more">Learn 2 more new phrases</button>`:''} <button class="btn" data-mode="build">Practise with Build</button></div></div>`+perDayCtl()+chunkList();
+  bind();const m=root.querySelector('#more');if(m)m.onclick=()=>{S.day.n=Math.max(0,S.day.n-2);save();learn()};return}
+ cur=k;const s=status(k.id),c=st(k.id),ex=exampleOf(k),nexts=[0,1,2,3].map(g=>fmt(sched(c,g,now).due-now));
+ root.innerHTML=head()+`<div class="card">
+ <div class="meta"><span>No. ${CH.indexOf(k)+1} of ${CH.length}</span><span class="tag t-${s}">${LAB[s]}</span><span>${dueN} due · ${newLeft} new left today</span></div>
+ <div class="big" lang="de">${esc(k.chunk)}</div>
+ <div class="reveal ${shown?'':'unrevealed'}">
+  <div class="en">${esc(k.means)}</div>
+  <p class="note">Literally “${esc(k.lit)}”. ${esc(k.note)}</p>
+  <div class="ex"><div lang="de">${ex.html}</div><div style="color:var(--mute);margin-top:4px">${esc(ex.en)}${ex.spk?` (${esc(ex.spk)})`:''}</div></div>
+  <div style="color:var(--mute);font-size:13px;margin-top:8px">${ex.src}</div>
+ </div>
+ ${shown?`<div class="grades">${['Again','Hard','Good','Easy'].map((t,g)=>`<button class="g${g}" data-g="${g}">${t}<small>${nexts[g]}</small></button>`).join('')}</div>`
+  :`<div class="row"><button class="btn pri" id="show">Show answer</button></div>`}
+ <div class="row"><button class="btn" id="bSay">Say it</button><button class="btn" id="bHear">Hear it in context</button></div>
+ </div>`+perDayCtl()+chunkList();bind();
+ root.querySelector('#bSay').onclick=()=>hear(k.ex[0][0]);
+ root.querySelector('#bHear').onclick=()=>{mode='context';render()}}
+function gradeChunk(g){const k=cur;if(!k||!shown)return;const was=!st(k.id);S.cards[k.id]=sched(st(k.id),g,Date.now());if(was)S.day.n++;save();shown=false;learn()}
+document.addEventListener('keydown',e=>{const sec=document.getElementById('chunks');if(!sec||sec.hidden||mode!=='learn'||e.target.closest('input,textarea'))return;
+ if(e.key===' '){e.preventDefault();if(!shown){shown=true;learn()}}else if(shown&&'1234'.includes(e.key)&&e.key.length===1)gradeChunk(+e.key-1)});
 
 function build(){const k=cur||CH[0];if(bi>2)return yours();
  const it=k.build[bi];if(!tray.length&&!placed.length)tray=shuffle(it.blocks.concat(it.extra)).map((t,i)=>({t,i}));
@@ -146,7 +170,7 @@ function context(){const k=cur||CH[0];
    <div class="sub" lang="de"><div>${hl(c.de,x.note)}</div><div class="en">${esc(c.en)}</div></div>
    <div class="note" style="color:var(--ink)">${esc(x.note)}</div></div>`}).join('')
  :`<p style="font-size:16px">This chunk isn't spoken in the documentary, so here it is in everyday sentences instead:</p>`}
- <div style="display:grid;gap:6px">${k.ex.map(([de,en])=>`<div class="ex">${play(de)}<span lang="de"><b>${esc(de)}</b></span><span class="en">${esc(en)}</span></div>`).join('')}</div>
+ <div style="display:grid;gap:6px">${k.ex.map(([de,en])=>`<div class="exl">${play(de)}<span lang="de"><b>${esc(de)}</b></span><span class="en2">${esc(en)}</span></div>`).join('')}</div>
  <div class="ctrls"><button class="btn pri" id="tobuild">Build with it →</button></div></div>`+chunkList();bind()}
 
 function render(){if(mode==='learn')learn();else if(mode==='build')build();else context()}
@@ -155,8 +179,8 @@ function bind(){const $=s=>root.querySelector(s),A=s=>root.querySelectorAll(s);
  A('[data-k]').forEach(b=>b.onclick=()=>{cur=CH.find(k=>k.id===b.dataset.k);shown=false;resetBuild();if(mode==='learn')mode='build';render()});
  A('[data-say]').forEach(b=>b.onclick=()=>hear(b.dataset.say));
  const sh=$('#show');if(sh)sh.onclick=()=>{shown=true;learn()};
- A('[data-g]').forEach(b=>b.onclick=()=>{const k=cur,was=!st(k.id);S.cards[k.id]=schedule(st(k.id),+b.dataset.g,Date.now());if(was)S.day.n++;save();shown=false;learn()});
- const pd=$('#pd');if(pd)pd.onchange=()=>{S.perDay=Math.max(1,Math.min(28,+pd.value||4));save();learn()};
+ A('[data-g]').forEach(b=>b.onclick=()=>gradeChunk(+b.dataset.g));
+ const pd=$('#pd');if(pd){pd.onkeydown=e=>e.stopPropagation();pd.onchange=()=>{S.perDay=Math.max(1,Math.min(28,Math.round(+pd.value)||4));save();learn()}}
  A('[data-pick]').forEach(b=>b.onclick=()=>{if(checked)return;const p=tray.find(x=>x.i==b.dataset.pick);if(p&&!placed.includes(p)){placed.push(p);build()}});
  A('[data-back]').forEach(b=>b.onclick=()=>{if(checked)return;placed.splice(+b.dataset.back,1);build()});
  const ck=$('#chk');if(ck)ck.onclick=check;const cl=$('#clr');if(cl)cl.onclick=()=>{placed=[];build()};
