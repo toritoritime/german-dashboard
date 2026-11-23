@@ -8,7 +8,7 @@ const KEY='gd-chunks',DAY=864e5,MIN=6e4;
 const today=()=>{const d=new Date();return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate()};
 let S={v:1,cards:{},day:{d:'',n:0},perDay:4,updated:0};try{const x=JSON.parse(localStorage.getItem(KEY)||'null');if(x&&x.cards)S=Object.assign(S,x)}catch(e){}
 const save=()=>{S.updated=Date.now();try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
-let mode='learn',cur=CH[0],shown=false,bi=0,placed=[],tray=[],checked=null,mine='',rec=null,take=null;
+let mode='learn',cur=CH[0],shown=false,preview=false,filter='all',bi=0,placed=[],tray=[],checked=null,mine='',rec=null,take=null;
 
 /* ---------- scheduling (same idea as the word cards) ---------- */
 const st=id=>S.cards[id];
@@ -45,7 +45,8 @@ const css=document.createElement('style');css.textContent=`
 #chunkApp .chtabs{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 14px}
 #chunkApp .chtabs button{font:16px Georgia,serif;padding:8px 16px;border-radius:99px;border:1px solid var(--rule);background:var(--paper);color:var(--ink);cursor:pointer}
 #chunkApp .chtabs button[aria-pressed=true]{background:var(--ink);color:var(--paper)}
-#chunkApp .chcard{border:1px solid var(--rule);border-radius:12px;padding:18px;background:var(--paper);display:grid;gap:12px;max-width:820px}
+#chunkApp .reg ol{grid-template-columns:repeat(auto-fill,minmax(250px,1fr))}#chunkApp .reg li button span{white-space:normal;line-height:1.3}
+#chunkApp .chcard{min-width:0;border:1px solid var(--rule);border-radius:12px;padding:18px;background:var(--paper);display:grid;gap:12px;max-width:820px}
 #chunkApp .big{font-size:28px;line-height:1.25}
 #chunkApp .note{color:var(--mute);font-size:15px;margin:0}
 #chunkApp .ctrls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
@@ -79,12 +80,22 @@ const css=document.createElement('style');css.textContent=`
 @media(max-width:600px){#chunkApp .big{font-size:23px}#chunkApp .blk{font-size:17px}}`;document.head.appendChild(css);
 
 /* ---------- views ---------- */
-function head(){const n=counts();
+function queueInfo(){const now=Date.now();if(S.day.d!==today())S.day={d:today(),n:0};
+ const due=CH.filter(k=>{const c=st(k.id);return c&&c.due<=now}).length,fresh=Math.max(0,Math.min(S.perDay-S.day.n,CH.filter(k=>!st(k.id)).length));return {due,fresh}}
+function head(){const n=counts(),q=queueInfo(),lab={new:'Not started',learning:'Learning',learnt:'Learnt',mastered:'Mastered'};
  return `<h2 style="font-size:26px;margin:0 0 4px">Phrases</h2>
- <p style="max-width:760px;font-size:17px;margin:0 0 8px">Fluent speakers don't build every sentence word by word: they snap together ready-made chunks, like Lego blocks. Learn the chunk, then click your own words into its slot.</p>
- <p class="note">${n.new} not started · ${n.learning} learning · ${n.learnt} learnt · ${n.mastered} mastered (of ${CH.length})</p>
- <div class="chtabs" role="group" aria-label="Phrases mode">${[['learn','Learn'],['build','Build'],['context','In context']].map(([k,t])=>`<button data-mode="${k}" aria-pressed="${mode===k}">${t}</button>`).join('')}</div>`}
-function chunkList(){return `<h3 style="font-size:18px;margin:22px 0 0">All ${CH.length} chunks</h3><div class="list">${CH.map((k,i)=>`<button data-k="${k.id}" aria-current="${cur&&cur.id===k.id}"><span class="dot ${status(k.id)}"></span>${i+1}. ${esc(k.chunk)}</button>`).join('')}</div>`}
+ <p style="max-width:760px;font-size:17px;margin:0 0 14px">Fluent speakers don't build every sentence word by word: they snap together ready-made chunks, like Lego blocks. Learn the chunk, then click your own words into its slot.</p>
+ <div class="stats">${Object.keys(lab).map(k=>`<div class="stat"><b>${n[k]}</b><span><i class="dot d-${k}"></i>${lab[k]}</span></div>`).join('')}<div class="stat"><b>${q.due+q.fresh}</b><span>To study now</span></div></div>
+ <div class="bar" aria-hidden="true">${['mastered','learnt','learning'].map(k=>`<i class="d-${k}" style="width:${n[k]/CH.length*100}%"></i>`).join('')}</div>
+ <div class="chtabs" role="group" aria-label="Phrases mode" style="margin-top:16px">${[['learn','Learn'],['build','Build'],['context','In context']].map(([k,t])=>`<button data-mode="${k}" aria-pressed="${mode===k}">${t}</button>`).join('')}</div>`}
+function chunkList(){const lab={new:'Not started',learning:'Learning',learnt:'Learnt',mastered:'Mastered'};
+ const items=CH.map((k,i)=>[k,i]).filter(([k])=>filter==='all'||status(k.id)===filter);
+ return `<div class="reg">
+ <h2>The register</h2>
+ <div style="color:var(--mute)">${mode==='learn'?'In the order of your list. Tap a phrase to review it without affecting its schedule.':'Tap a phrase to '+(mode==='build'?'build sentences with it.':'hear it in context.')}</div>
+ <div class="filters"><span class="seg" id="cflt">${[['all','All'],['new','Not started'],['learning','Learning'],['learnt','Learnt'],['mastered','Mastered']].map(([f,t])=>`<button data-f="${f}" aria-pressed="${filter===f}">${t}</button>`).join('')}</span></div>
+ <ol>${items.map(([k,i])=>{const s=status(k.id);return `<li class="${cur&&cur.id===k.id?'cur':''}"><button data-k="${k.id}" title="${esc(k.means)}"><small>${i+1}</small><span>${esc(k.chunk)}</span><i class="dot d-${s}" aria-label="${lab[s]}"></i></button></li>`}).join('')||'<li style="color:var(--mute);padding:8px">No phrases here yet.</li>'}</ol>
+ <p class="src">Chunks from your list, with a few examples corrected. “In context” clips come from the same documentary as the words.</p></div>`}
 function back(k){return `<div class="big" lang="de">${blk('*'+k.chunk)}</div>
  <div><b>Means:</b> ${esc(k.means)} <span class="note" style="display:inline">· literally “${esc(k.lit)}”</span></div>
  <div class="note" style="color:var(--ink)">${esc(k.note)}</div>
@@ -97,15 +108,19 @@ function boldChunk(de,k){ // bold the words of the chunk inside an everyday exam
 function exampleOf(k){const x=k.ctx.find(c=>c.kind==='exact');
  if(x&&CL[x.c]){const c=CL[x.c];return {html:hl(c.de,x.note).replace(/<mark class="chm">/g,'<b>').replace(/<\/mark>/g,'</b>'),en:c.en,spk:c.spk,src:'Said in the documentary'}}
  const [de,en]=k.ex[0];return {html:boldChunk(de,k),en,spk:'',src:k.ctx.length?'Everyday example · the documentary has a close relative under Hear it in context':'Everyday example · this chunk isn’t spoken in the documentary'}}
-const perDayCtl=()=>`<p class="pdl">New phrases per day: <input id="pd" type="number" min="1" max="28" value="${S.perDay}" style="width:60px;font:15px Georgia,serif;padding:3px 6px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--ink)"></p>`;
-function learn(){const now=Date.now(),k=nextCard();if(S.day.d!==today())S.day={d:today(),n:0};
+const perDayCtl=()=>`<div class="row" style="justify-content:space-between;align-items:center">
+ <span style="color:var(--mute);font-size:14px">New phrases per day:</span>
+ <span style="display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="seg" id="cpd">${[2,4,8].map(n=>`<button data-n="${n}" aria-pressed="${S.perDay===n}">${n}</button>`).join('')}</span><label style="display:inline-flex;gap:6px;align-items:center;color:var(--mute);font-size:14px">or type: <input id="pd" type="number" min="1" max="28" inputmode="numeric" value="${S.perDay}" style="width:72px;font:15px Georgia,serif;padding:8px;border:1px solid var(--rule);border-radius:6px;background:var(--paper);color:var(--ink)"></label></span></div>
+ <p style="margin:10px 2px 0;color:var(--mute);font-size:14px">Keys: space shows the answer, then 1 Again · 2 Hard · 3 Good · 4 Easy. A phrase counts as <b>learnt</b> once it's scheduled a day or more ahead, and <b>mastered</b> at 21 days or more.</p>`;
+const layout=card=>`<div class="learn"><div>${card}${perDayCtl()}</div>${chunkList()}</div>`;
+function learn(){const now=Date.now(),k=preview?cur:nextCard();if(S.day.d!==today())S.day={d:today(),n:0};
  const dueN=CH.filter(x=>{const c=st(x.id);return c&&c.due<=now}).length,newLeft=Math.max(0,Math.min(S.perDay-S.day.n,CH.filter(x=>!st(x.id)).length));
  if(!k){const nx=CH.map(x=>st(x.id)).filter(Boolean).sort((a,b)=>a.due-b.due)[0],allNew=CH.filter(x=>!st(x.id)).length;
-  root.innerHTML=head()+`<div class="card"><div class="done"><h2>Gut gemacht.</h2><p style="color:var(--mute)">No phrases are due right now.${nx?` Next review in ${fmt(nx.due-now)}.`:''}</p>${allNew?`<button class="btn pri" id="more">Learn 2 more new phrases</button>`:''} <button class="btn" data-mode="build">Practise with Build</button></div></div>`+perDayCtl()+chunkList();
+  root.innerHTML=head()+layout(`<div class="card"><div class="done"><h2>Gut gemacht.</h2><p style="color:var(--mute)">No phrases are due right now.${nx?` Next review in ${fmt(nx.due-now)}.`:''}</p>${allNew?`<button class="btn pri" id="more">Learn 2 more new phrases</button>`:''} <button class="btn" data-mode="build">Practise with Build</button></div></div>`);
   bind();const m=root.querySelector('#more');if(m)m.onclick=()=>{S.day.n=Math.max(0,S.day.n-2);save();learn()};return}
  cur=k;const s=status(k.id),c=st(k.id),ex=exampleOf(k),nexts=[0,1,2,3].map(g=>fmt(sched(c,g,now).due-now));
- root.innerHTML=head()+`<div class="card">
- <div class="meta"><span>No. ${CH.indexOf(k)+1} of ${CH.length}</span><span class="tag t-${s}">${LAB[s]}</span><span>${dueN} due · ${newLeft} new left today</span></div>
+ root.innerHTML=head()+layout(`<div class="card">
+ <div class="meta"><span>No. ${CH.indexOf(k)+1} of ${CH.length}</span><span class="tag t-${s}">${LAB[s]}</span>${preview?'<span>Preview: not graded</span>':`<span>${dueN} due · ${newLeft} new left today</span>`}</div>
  <div class="big" lang="de">${esc(k.chunk)}</div>
  <div class="reveal ${shown?'':'unrevealed'}">
   <div class="en">${esc(k.means)}</div>
@@ -113,19 +128,19 @@ function learn(){const now=Date.now(),k=nextCard();if(S.day.d!==today())S.day={d
   <div class="ex"><div lang="de">${ex.html}</div><div style="color:var(--mute);margin-top:4px">${esc(ex.en)}${ex.spk?` (${esc(ex.spk)})`:''}</div></div>
   <div style="color:var(--mute);font-size:13px;margin-top:8px">${ex.src}</div>
  </div>
- ${shown?`<div class="grades">${['Again','Hard','Good','Easy'].map((t,g)=>`<button class="g${g}" data-g="${g}">${t}<small>${nexts[g]}</small></button>`).join('')}</div>`
-  :`<div class="row"><button class="btn pri" id="show">Show answer</button></div>`}
+ ${shown&&!preview?`<div class="grades">${['Again','Hard','Good','Easy'].map((t,g)=>`<button class="g${g}" data-g="${g}">${t}<small>${nexts[g]}</small></button>`).join('')}</div>`
+  :`<div class="row">${shown?'':'<button class="btn pri" id="show">Show answer</button>'}${preview?'<button class="btn" id="pback">Back to study</button>':''}</div>`}
  <div class="row"><button class="btn" id="bSay">Say it</button><button class="btn" id="bHear">Hear it in context</button></div>
- </div>`+perDayCtl()+chunkList();bind();
+ </div>`);bind();const pb=root.querySelector('#pback');if(pb)pb.onclick=()=>{preview=false;shown=false;learn()};
  root.querySelector('#bSay').onclick=()=>hear(k.ex[0][0]);
  root.querySelector('#bHear').onclick=()=>{mode='context';render()}}
-function gradeChunk(g){const k=cur;if(!k||!shown)return;const was=!st(k.id);S.cards[k.id]=sched(st(k.id),g,Date.now());if(was)S.day.n++;save();shown=false;learn()}
+function gradeChunk(g){const k=cur;if(!k||!shown||preview)return;const was=!st(k.id);S.cards[k.id]=sched(st(k.id),g,Date.now());if(was)S.day.n++;save();shown=false;learn()}
 document.addEventListener('keydown',e=>{const sec=document.getElementById('chunks');if(!sec||sec.hidden||mode!=='learn'||e.target.closest('input,textarea'))return;
  if(e.key===' '){e.preventDefault();if(!shown){shown=true;learn()}}else if(shown&&'1234'.includes(e.key)&&e.key.length===1)gradeChunk(+e.key-1)});
 
 function build(){const k=cur||CH[0];if(bi>2)return yours();
  const it=k.build[bi];if(!tray.length&&!placed.length)tray=shuffle(it.blocks.concat(it.extra)).map((t,i)=>({t,i}));
- root.innerHTML=head()+`<div class="chcard">
+ root.innerHTML=head()+'<div class="learn"><div>'+`<div class="chcard">
   <div class="note">${esc(k.chunk)} · step ${bi+1} of 4</div>
   <div style="font-size:21px">Build: <b>${esc(it.en)}</b></div>
   <div class="line" id="line">${placed.map((p,j)=>blk(p.t,checked?(checked.ok?'good':(checked.bad.includes(j)?'bad':'good')):'').replace('class="blk','data-back="'+j+'" class="blk')).join('')}</div>
@@ -134,13 +149,13 @@ function build(){const k=cur||CH[0];if(bi>2)return yours();
    :`<div class="fb no"><b>Not quite.</b><div>The right order is: <span lang="de">${play(checked.ans)} <b>${esc(checked.ans)}</b></span></div><div>${esc(k.note)}</div></div>`):''}
   <div class="ctrls">${checked?(checked.ok?`<button class="btn pri" id="nxt">Next →</button>`:`<button class="btn" id="again">Try again</button><button class="btn pri" id="nxt">Next →</button>`)
    :`<button class="btn pri" id="chk" ${placed.length?'':'disabled'}>Check</button><button class="btn" id="clr">Clear</button>`}<span class="note">Brown blocks are the chunk.</span></div>
- </div>`+chunkList();bind()}
+ </div>`+'</div>'+chunkList()+'</div>';bind()}
 function check(){const k=cur,it=k.build[bi],ans=sentence(it.blocks),got=sentence(placed.map(p=>p.t));
  const ok=normS(got)===normS(ans);const bad=[];placed.forEach((p,j)=>{if(plain(p.t)!==plain(it.blocks[j]||''))bad.push(j)});
  checked={ok,ans,bad};if(ok)hear(ans);build()}
 
 function yours(){const k=cur,fr=k.slot.frame,parts=fr.split('{…}'),sent=mine.trim()?(parts[0]+mine.trim()+parts[1]).replace(/\s+([?!.,])/g,'$1'):'';
- root.innerHTML=head()+`<div class="chcard">
+ root.innerHTML=head()+'<div class="learn"><div>'+`<div class="chcard">
   <div class="note">${esc(k.chunk)} · step 4 of 4: your own words</div>
   <div style="font-size:21px">Click your own words into the slot</div>
   <div class="note" style="color:var(--ink)">${esc(k.slot.hint)}</div>
@@ -151,7 +166,7 @@ function yours(){const k=cur,fr=k.slot.frame,parts=fr.split('{…}'),sent=mine.t
    <div id="score">${take?take:''}</div>`:''}
   <div class="note">Reminder: ${esc(k.note)}</div>
   <div class="ctrls"><button class="btn" id="redo">↺ Build again</button><button class="btn" id="ctx">Hear it in context →</button><button class="btn" id="nextk">Next chunk →</button></div>
- </div>`+chunkList();bind();
+ </div>`+'</div>'+chunkList()+'</div>';bind();
  const m=root.querySelector('#mine');m.oninput=()=>{mine=m.value;take=null;const p=m.selectionStart;yours();const n=root.querySelector('#mine');n.focus();n.setSelectionRange(p,p)};
  if(sent){root.querySelector('#hearme').onclick=()=>hear(sent);
   const sb=root.querySelector('#sayit');sb.onclick=async()=>{const d=DLG();if(!d||!d.practise){root.querySelector('#score').innerHTML='<p class="note">Speaking practice needs the Dialogues part of the app.</p>';return}
@@ -163,7 +178,7 @@ function scoreView(sent,sc){if(!sc||sc.total==null)return DLG().scoreHTML(sc||{}
  return `<div class="big" lang="de">${words}</div>`+DLG().scoreHTML(sc)}
 
 function context(){const k=cur||CH[0];
- root.innerHTML=head()+`<div class="chcard"><div class="big" lang="de">${blk('*'+k.chunk)}</div><div class="note">${esc(k.means)}</div>
+ root.innerHTML=head()+'<div class="learn"><div>'+`<div class="chcard"><div class="big" lang="de">${blk('*'+k.chunk)}</div><div class="note">${esc(k.means)}</div>
  ${k.ctx.length?k.ctx.map((x,j)=>{const c=CL[x.c]||{de:'',en:''};return `<div style="display:grid;gap:8px;border-top:1px solid var(--rule);padding-top:12px">
    <div class="note">${x.kind==='exact'?'<b style="color:var(--ink)">Used in the film</b>':'Close relative in the film'} · ${esc(c.spk||'')}</div>
    <video src="clips/${esc(x.c)}.mp4" playsinline controls preload="metadata"></video>
@@ -171,12 +186,14 @@ function context(){const k=cur||CH[0];
    <div class="note" style="color:var(--ink)">${esc(x.note)}</div></div>`}).join('')
  :`<p style="font-size:16px">This chunk isn't spoken in the documentary, so here it is in everyday sentences instead:</p>`}
  <div style="display:grid;gap:6px">${k.ex.map(([de,en])=>`<div class="exl">${play(de)}<span lang="de"><b>${esc(de)}</b></span><span class="en2">${esc(en)}</span></div>`).join('')}</div>
- <div class="ctrls"><button class="btn pri" id="tobuild">Build with it →</button></div></div>`+chunkList();bind()}
+ <div class="ctrls"><button class="btn pri" id="tobuild">Build with it →</button></div></div>`+'</div>'+chunkList()+'</div>';bind()}
 
 function render(){if(mode==='learn')learn();else if(mode==='build')build();else context()}
 function bind(){const $=s=>root.querySelector(s),A=s=>root.querySelectorAll(s);
- A('[data-mode]').forEach(b=>b.onclick=()=>{mode=b.dataset.mode;shown=false;resetBuild();render()});
- A('[data-k]').forEach(b=>b.onclick=()=>{cur=CH.find(k=>k.id===b.dataset.k);shown=false;resetBuild();if(mode==='learn')mode='build';render()});
+ A('[data-mode]').forEach(b=>b.onclick=()=>{mode=b.dataset.mode;shown=false;preview=false;resetBuild();render()});
+ A('[data-k]').forEach(b=>b.onclick=()=>{cur=CH.find(k=>k.id===b.dataset.k);shown=false;resetBuild();preview=mode==='learn';render();if(innerWidth<900)root.scrollIntoView({block:'start',behavior:'smooth'})});
+ A('[data-f]').forEach(b=>b.onclick=()=>{filter=b.dataset.f;render()});
+ A('#cpd [data-n]').forEach(b=>b.onclick=()=>{S.perDay=+b.dataset.n;save();preview=false;learn()});
  A('[data-say]').forEach(b=>b.onclick=()=>hear(b.dataset.say));
  const sh=$('#show');if(sh)sh.onclick=()=>{shown=true;learn()};
  A('[data-g]').forEach(b=>b.onclick=()=>gradeChunk(+b.dataset.g));
