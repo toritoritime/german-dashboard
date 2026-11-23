@@ -206,13 +206,38 @@ const estDur=l=>durCache[l.id]||Math.max(1,l.de.split(/\s+/).length*0.42);
 /* ---------- unlocking ---------- */
 let opened={};try{opened=JSON.parse(localStorage.getItem('gd-opened2')||'{}')}catch(e){}
 function started(s){const S=window.SRS;if(!S)return 0;let n=0;for(let r=s.words[0];r<=s.words[1];r++)if(S.status(r)!=='new')n++;return n}
-const unlocked=s=>opened[s.id]||started(s)>=25;
+const unlocked=s=>opened[s.id]||started(s)>=25||best[s.id]!=null;
 
 /* ---------- storage ---------- */
 const idb=new Promise(res=>{try{const r=indexedDB.open('german-dialogues',2);r.onupgradeneeded=()=>{const d=r.result;if(!d.objectStoreNames.contains('sessions'))d.createObjectStore('sessions',{keyPath:'id'});if(!d.objectStoreNames.contains('tts'))d.createObjectStore('tts')};r.onsuccess=()=>res(r.result);r.onerror=()=>res(null)}catch(e){res(null)}});
 const tx=(mode,fn)=>idb.then(d=>d?new Promise((res,rej)=>{const t=d.transaction('sessions',mode);const out=fn(t.objectStore('sessions'));t.oncomplete=()=>res(out&&out.result);t.onerror=()=>rej(t.error)}):Promise.reject('no-db'));
 const allSessions=()=>tx('readonly',s=>s.getAll()).then(r=>(r||[]).filter(x=>ST.some(s=>s.id===x.storyId)&&(!x.profile||String(x.profile).toLowerCase()===String(window.PROFILE||'').toLowerCase())).sort((a,b)=>b.date-a.date)).catch(()=>[]);
 let best={};try{best=JSON.parse(localStorage.getItem('gd-best2')||'{}')}catch(e){}
+/* ---------- saved dialogues follow your account (recordings included) ---------- */
+const acct=()=>window.Profiles&&window.Profiles.accounts&&window.Profiles.token&&window.Profiles.token();
+const b64Blob=(d,type)=>{const bin=atob(d),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return new Blob([u],{type})};
+const metaOf=x=>({id:x.id,storyId:x.storyId,title:x.title,role:x.role,date:x.date,total:x.total,lines:x.lines.map(l=>({id:l.id,sc:l.sc}))});
+async function pushSession(x){const T=acct();if(!T)return false;const audio={};
+ for(const l of x.lines)if(l.blob)audio[l.id]={type:l.blob.type||'audio/webm',d:await b64(l.blob)};
+ await window.Profiles.rpc('gd_sess_put',{p_token:T,p_id:x.id,p_meta:metaOf(x),p_audio:audio});
+ x.synced=true;await tx('readwrite',st=>st.put(x)).catch(()=>{});return true}
+function bestFrom(list){let ch=false;list.forEach(x=>{if(x.total!=null&&(best[x.storyId]==null||x.total>best[x.storyId])){best[x.storyId]=x.total;ch=true}});
+ if(ch)try{localStorage.setItem('gd-best2',JSON.stringify(best))}catch(e){}return ch}
+let sessSyncing=null;
+function syncSessions(){if(sessSyncing)return sessSyncing;sessSyncing=(async()=>{let changed=false;const T=acct();
+ const local=await allSessions();if(bestFrom(local))changed=true;if(!T)return changed;
+ const remote=await window.Profiles.rpc('gd_sess_list',{p_token:T});const rid=new Set((remote||[]).map(m=>m.id));
+ for(const x of local){if(rid.has(x.id))continue;
+  if(x.synced){await tx('readwrite',st=>st.delete(x.id)).catch(()=>{});changed=true}   // deleted on another device
+  else{await pushSession(x).catch(e=>console.warn('upload failed',e))}}
+ const have=new Set(local.map(x=>x.id));
+ for(const m of remote||[]){if(have.has(m.id))continue;
+  const full=await window.Profiles.rpc('gd_sess_get',{p_token:T,p_id:m.id});if(!full||!full.meta)continue;const A=full.audio||{};
+  const rec={...full.meta,profile:window.PROFILE||null,synced:true,lines:full.meta.lines.map(l=>({id:l.id,sc:l.sc,blob:A[l.id]?b64Blob(A[l.id].d,A[l.id].type):null}))};
+  await tx('readwrite',st=>st.put(rec)).catch(()=>{});changed=true}
+ if(bestFrom(await allSessions()))changed=true;
+ return changed})().catch(e=>{console.warn('saved dialogues not synced:',e);return false}).finally(()=>{sessSyncing=null});return sessSyncing}
+
 
 /* ---------- recording + speech recognition ---------- */
 let actx=null;const AC=()=>actx||(actx=new (window.AudioContext||window.webkitAudioContext)());
@@ -391,7 +416,7 @@ function bindVoices(){const sv=(g,el)=>{VO[g]=el.value;localStorage.setItem('gd-
  const gx=q('#gkeyx');if(gx)gx.onclick=()=>{if(gx.dataset.c){GC.key='';GC.voices=[];GC.model='';GC.sttModel='';try{localStorage.removeItem('gd-gstt')}catch(e){}saveGC();home()}else{gx.dataset.c=1;gx.textContent='Click again to remove the key (cached audio stays)'}};
 
  const ur=q('#userec');if(ur)ur.onchange=()=>{useRec=ur.checked;try{localStorage.setItem('gd-userec',JSON.stringify(useRec))}catch(e){}home()};
- const setupData=withProgress=>{const d={p:'gemini',k:GC.key||undefined,m:GC.model||undefined,v:GC.pick.gemini||undefined,e:EL.key?{k:EL.key,v:{f:elVoice('f'),m:elVoice('m')}}:undefined,a:azOn()?{k:AZ.key,r:AZ.region}:undefined};
+ const setupData=withProgress=>{const d={p:'gemini',k:GC.key||undefined,m:GC.model||undefined,v:GC.pick.gemini||undefined,e:EL.key?{k:EL.key,v:{f:elVoice('f'),m:elVoice('m')}}:undefined,a:azOn()?{k:AZ.key,r:AZ.region}:undefined,c:(()=>{try{return JSON.parse(localStorage.getItem('gd-ckey')||'""')||undefined}catch(e){}})()};
   if(withProgress&&window.PROFILE){try{d.n=window.PROFILE;d.s=JSON.parse(localStorage.getItem('de100-srs')||'null');d.o=JSON.parse(localStorage.getItem('gd-opened2')||'null')}catch(e){}}
   return btoa(unescape(encodeURIComponent(JSON.stringify(d)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')};
  const site=()=>(window.SITE_URL||location.href.split('#')[0]);
@@ -406,7 +431,9 @@ function bindVoices(){const sv=(g,el)=>{VO[g]=el.value;localStorage.setItem('gd-
   catch(e){q('#gprog').textContent=`Stopped after ${n} lines: ${e.message||e}`}gp.disabled=false};
 }
 
+let homeSynced=0;
 async function home(){
+ if(Date.now()-homeSynced>20000){homeSynced=Date.now();syncSessions().then(ch=>{if(ch&&view.name==='home')home()})}
  const S=await allSessions();
  root.innerHTML=`<h2 style="font-size:26px">Dialogues</h2>
  <p class="note" style="font-size:15px;max-width:72ch">Four short, connected stories. Sophie, a young journalist, visits Moritz at his family's castle. Each story opens once you've studied its 25 words, and those 25 words are underlined in it. Listen first, then speak each line yourself.</p>
@@ -421,7 +448,7 @@ async function home(){
  qa('[data-s]').forEach(b=>b.onclick=()=>{const s=ST[+b.dataset.s];if(unlocked(s))return go({name:'listen',i:+b.dataset.s});
   const sp=b.querySelector('.lock');if(b.dataset.c){opened[s.id]=1;localStorage.setItem('gd-opened2',JSON.stringify(opened));go({name:'listen',i:+b.dataset.s})}else{b.dataset.c=1;sp.textContent='Click again to open it early'}});
  qa('[data-open]').forEach(b=>b.onclick=async()=>{const x=(await allSessions()).find(s=>s.id===b.dataset.open);if(x){sess=fromSaved(x);go({name:'results',i:ST.findIndex(s=>s.id===x.storyId)})}});
- qa('[data-del]').forEach(b=>b.onclick=async()=>{if(b.dataset.c){await tx('readwrite',s=>s.delete(b.dataset.del)).catch(()=>{});b.closest('.sess').remove()}else{b.dataset.c=1;b.textContent='Confirm delete'}});
+ qa('[data-del]').forEach(b=>b.onclick=async()=>{if(b.dataset.c){const id=b.dataset.del;await tx('readwrite',s=>s.delete(id)).catch(()=>{});b.closest('.sess').remove();const T=acct();if(T)window.Profiles.rpc('gd_sess_del',{p_token:T,p_id:id}).catch(()=>{})}else{b.dataset.c=1;b.textContent='Confirm delete'}});
 }
 function head(s,tab){const i=ST.indexOf(s);return `<button class="link" id="back">← All stories</button>
  <h2 style="margin-top:12px;font-size:28px">Story ${i+1}: ${esc(s.title)} <span class="note" style="font-size:18px"><i>${esc(s.en_title)}</i></span></h2>
@@ -516,7 +543,7 @@ function results(){
   on=false;pd.textContent='▶ Play my dialogue';rows.forEach(r=>r.classList.remove('now'))};
  q('#again').onclick=()=>{sess=null;go({name:'speak',i})};
  q('#save').onclick=async()=>{const rec={id:sess.id,profile:window.PROFILE||null,storyId:s.id,title:'Story '+(i+1)+': '+s.title,role:sess.role,date:Date.now(),total,lines:s.lines.map(l=>{const t=sess.takes[l.id];return {id:l.id,blob:t?t.blob:null,sc:t?t.sc:null}})};
-  try{await tx('readwrite',st=>st.put(rec));sess.saved=true;q('#save').disabled=true;q('#save').textContent='Saved';q('#msg').textContent='Saved with your recordings. Find it under Saved dialogues.'}
+  try{await tx('readwrite',st=>st.put(rec));sess.saved=true;q('#save').disabled=true;q('#save').textContent='Saved';q('#msg').textContent='Saved with your recordings. Find it under Saved dialogues.';if(acct())pushSession(rec).then(()=>{const m=q('#msg');if(m)m.textContent='Saved with your recordings, on all your devices.'}).catch(()=>{const m=q('#msg');if(m)m.textContent='Saved on this device. It will copy to your other devices next time you are online.'})}
   catch(e){q('#msg').textContent='Saving was blocked here. Use Download to keep your recordings.'}};
  q('#dl').onclick=async()=>{q('#msg').textContent='Building the file…';try{
   const SRo=24000,parts=[];
@@ -532,5 +559,11 @@ function results(){
 }
 if(EL.key&&!EL.voices.length){elFetchVoices(EL.key).then(v=>{EL.voices=v;saveEL();if(view.name==='home'&&root.innerHTML)home()}).catch(e=>{EL.err=e.message||String(e)})}
 if(GC.provider==='gemini'&&GC.key&&!GC.model){gemFindModel(GC.key).then(m=>{GC.model=m;saveGC();if(view.name==='home'&&root.innerHTML)home()}).catch(e=>{GC.err=e.message||String(e)})}
-window.DLG={open:()=>{if(view.name==='home')home();else render()},leave:stopAll,_test:{markWords,norm,scoreTake,rhythm}};
+window.DLG={open:()=>{if(view.name==='home')home();else render()},leave:stopAll,_test:{markWords,norm,scoreTake,rhythm},
+ /* used by the Phrases tab: speak any German text in the story voices, and record + mark any sentence */
+ say:(text,g='f',r=1)=>{stopAll();return say({id:'_t:'+text,de:text,spk:'X',tok:norm(text).map(t=>({t}))},{cast:{X:g}},r)},
+ stop:stopAll,
+ practise:(text,onLevel,onAuto)=>{const l={id:'_t:'+text,de:text,spk:'X',tok:norm(text).map(t=>({t}))};const R=recorder(l,onLevel,onAuto,Math.max(7000,estDur(l)*2500+3000));
+  return {start:()=>R.start(),stop:async()=>{const rec=await R.stop();await transcribe(rec,l);return {sc:scoreTake(l,rec),blob:rec.blob}}}},
+ scoreHTML:sc=>scoreBlock(sc)};
 })();

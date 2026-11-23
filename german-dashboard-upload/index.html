@@ -11,8 +11,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-192.png">
-<script src="data/config.js?v=202611221012"></script>
-<script src="js/profile.js?v=202611221012"></script>
+<script src="data/config.js?v=202611231332"></script>
+<script src="js/profile.js?v=202611231332"></script>
 <title>German Dashboard</title>
 <style>
 /* VOICE: calm, warm, studious — matches the owner's home dashboard
@@ -125,26 +125,32 @@ footer{color:var(--mute);font-size:14px}footer a{color:var(--green2)}
 body{padding-bottom:env(safe-area-inset-bottom)}
 .reveal.unrevealed{visibility:hidden}
 @media(max-width:600px){.reveal.unrevealed{display:none}header p{display:none!important}header.band{padding-top:calc(18px + env(safe-area-inset-top))}header p{font-size:15px}nav.tabs{gap:6px}nav.tabs button{padding:6px 11px;font-size:14px}.sync{display:none}.who-badge{margin-left:0;flex-basis:100%;order:5}#themeBtn{padding:4px 10px;font-size:13px}.band{padding-left:14px;padding-right:14px}}
+.unlock{margin:10px 2px 0;font-size:15px;color:var(--mute)}.unlock b{color:var(--ink)}
 @media(prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
 <header class="band"><div class="wrap">
 <h1>German Dashboard</h1>
-<p>Study the 100 most frequent German words with spaced repetition, hear each one in real sentences, then practise speaking in short dialogues. A new dialogue opens for every 25 words you learn.</p>
+<p>Study the most frequent German words with spaced repetition, hear each one in real sentences, then practise speaking in short dialogues. A new dialogue opens for every 25 words you learn; words 101–200 open once the first 100 are learnt, and clip questions once they are mastered.</p>
 <nav class="tabs" role="tablist">
-<button role="tab" id="t-learn" aria-selected="true" aria-controls="learn">Study</button>
+<button role="tab" id="t-home" aria-selected="true" aria-controls="home">Home</button>
+<button role="tab" id="t-learn" aria-selected="false" aria-controls="learn">Study</button>
 <button role="tab" id="t-hear" aria-selected="false" aria-controls="hear">Hear them spoken</button>
 <button role="tab" id="t-dlg" aria-selected="false" aria-controls="dlg">Dialogues</button>
+<button role="tab" id="t-chunks" aria-selected="false" aria-controls="chunks">Phrases</button>
+<button role="tab" id="t-quiz" aria-selected="false" aria-controls="quiz">Clip questions</button>
 <span class="sync" id="sync" aria-live="polite">Progress is saved on this device</span>
 <button id="themeBtn" style="border:1px solid var(--rule);background:var(--paper);color:var(--ink);border-radius:999px;padding:6px 14px;min-height:38px;font:15px Georgia,serif;cursor:pointer"></button>
 </nav>
 </div></header>
 
 <main>
-<section id="learn" class="band" role="tabpanel"><div class="wrap">
+<section id="home" class="band" role="tabpanel"><div class="wrap" id="homeApp"></div></section>
+<section id="learn" class="band" role="tabpanel" hidden><div class="wrap">
 <div class="stats" id="stats"></div>
 <div class="bar" id="bar" aria-hidden="true"></div>
+<p class="unlock" id="unlock" aria-live="polite"></p>
 <div class="learn">
 <div>
 <div class="card" id="card"></div>
@@ -195,26 +201,32 @@ body{padding-bottom:env(safe-area-inset-bottom)}
 </div>
 </div></section>
 <section id="dlg" class="band" role="tabpanel" hidden><div class="wrap" id="dlgApp"></div></section>
+<section id="chunks" class="band" role="tabpanel" hidden><div class="wrap" id="chunkApp"></div></section>
+<section id="quiz" class="band" role="tabpanel" hidden><div class="wrap" id="quizApp"></div></section>
 </main>
 <footer class="band"><div class="wrap">
 Clips are excerpts from <a href="https://www.youtube.com/watch?v=7dcyf84n-48">„Was ist aus dem deutschen Adel geworden?“ (Y-Kollektiv / hr 2026)</a>. The German text is the broadcasters' own subtitles; the English translations are mine. For personal study.
 </div></footer>
 
-<script src="data/words.js?v=202611221012"></script>
-<script src="data/clips.js?v=202611221012"></script>
-<script src="data/stories.js?v=202611221012"></script>
-<script src="data/audio.js?v=202611221012"></script>
+<script src="data/words.js?v=202611231332"></script>
+<script src="data/words2.js?v=202611231332"></script>
+<script src="data/quiz.js?v=202611231332"></script>
+<script src="data/chunks.js?v=202611231332"></script>
+<script src="data/clips.js?v=202611231332"></script>
+<script src="data/stories.js?v=202611231332"></script>
+<script src="data/audio.js?v=202611231332"></script>
 <script>
 {
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const W=(window.WORDS||[]).map(r=>({rank:r[0],w:r[1],en:r[2],src:r[3],forms:r[4],note:r[5]}));
+const ALL=(window.WORDS||[]).concat(window.WORDS2||[]).map(r=>({rank:r[0],w:r[1],en:r[2],src:r[3],forms:r[4],note:r[5]}));
+let W=ALL.slice(0,100);
 const EXC=window.EXCLUDE||{},INC=window.INCLUDE||{};
 const CL=(window.CLIPS||[]).map(r=>({id:r[0],src:r[1],a:r[2],b:r[3],spk:r[4],de:r[5],en:r[6]})).filter(c=>c.src==='carolin');
 const rx=f=>new RegExp('(^|[^\\p{L}])('+f.map(x=>x.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')+')(?=[^\\p{L}]|$)','giu');
 const formsFor=(w,c)=>(EXC[w.rank]||[]).includes(c.id)?[]:w.forms.concat((INC[w.rank]||{})[c.id]||[]);
 const hl=(t,w,c)=>{const f=formsFor(w,c);return f.length?esc(t).replace(rx(f),'$1<b>$2</b>'):esc(t)};
-const clipsOf=W.map(w=>{const m=CL.filter(c=>{const f=formsFor(w,c);return f.length&&rx(f).test(c.de)});const a=m.filter(c=>c.spk=='Carolin'),b=m.filter(c=>c.spk!='Carolin'),o=[];while(a.length||b.length){if(a.length)o.push(a.shift());if(b.length)o.push(b.shift())}return o});
+const clipsOf=ALL.map(w=>{const m=CL.filter(c=>{const f=formsFor(w,c);return f.length&&rx(f).test(c.de)});const a=m.filter(c=>c.spk=='Carolin'),b=m.filter(c=>c.spk!='Carolin'),o=[];while(a.length||b.length){if(a.length)o.push(a.shift());if(b.length)o.push(b.shift())}return o});
 
 /* ---------- spaced repetition (SM-2 style, Anki-like) ---------- */
 const MIN=60e3,DAY=864e5,STEPS=[1*MIN,10*MIN];
@@ -222,6 +234,10 @@ const KEY='de100-srs';
 const blank=()=>({v:1,cards:{},day:{d:'',n:0},perDay:10,updated:0});
 let S=blank();
 try{const l=JSON.parse(localStorage.getItem(KEY)||'null');if(l&&l.v===1)S=l}catch(e){}
+/* words 101–200 open once every one of words 1–100 is learnt (or mastered); clip questions once all are mastered */
+const first100Learnt=()=>ALL.slice(0,100).every(w=>{const c=S.cards[w.rank];return c&&c.s==='review'});
+const first100Mastered=()=>ALL.slice(0,100).every(w=>{const c=S.cards[w.rank];return c&&c.s==='review'&&c.ivl>=21});
+if(S.lvl2||first100Learnt()){S.lvl2=true;W=ALL}
 // one-time carry-over from the earlier 25-word page
 try{const o=JSON.parse(localStorage.getItem('de25')||'null');if(o&&o.known&&!S.updated){for(const i in o.known)if(o.known[i])S.cards[+i+1]={s:'review',step:0,ivl:1,ease:2.5,due:Date.now(),reps:1,lapses:0};}}catch(e){}
 const today=()=>new Date().toLocaleDateString('en-CA');
@@ -293,9 +309,18 @@ function renderStats(){
  const q=queue();const dueN=q.due.length+q.fresh.length;
  const lab={new:'Not started',learning:'Learning',learnt:'Learnt',mastered:'Mastered'};
  $('stats').innerHTML=Object.keys(lab).map(k=>`<div class="stat"><b>${n[k]}</b><span><i class="dot d-${k}"></i>${lab[k]}</span></div>`).join('')+`<div class="stat"><b>${dueN}</b><span>To study now</span></div>`;
- $('bar').innerHTML=['mastered','learnt','learning'].map(k=>`<i class="d-${k}" style="width:${n[k]}%"></i>`).join('');
+ $('bar').innerHTML=['mastered','learnt','learning'].map(k=>`<i class="d-${k}" style="width:${n[k]/W.length*100}%"></i>`).join('');
+ renderUnlock();
  document.querySelectorAll('#perDay button').forEach(b=>b.setAttribute('aria-pressed',+b.dataset.n===S.perDay));if(document.activeElement!==$('perDayIn'))$('perDayIn').value=S.perDay;
 }
+function renderUnlock(){
+ const f=ALL.slice(0,100),learnt=f.filter(w=>{const c=st(w.rank);return c&&c.s==='review'}).length,mast=f.filter(w=>status(w.rank)==='mastered').length;
+ $('unlock').innerHTML=!S.lvl2?`<b>Next:</b> words 101–200 open when all of the first 100 are learnt · ${learnt} of 100 so far`
+  :first100Mastered()?`<b>Unlocked:</b> words 101–200 and <a href="#" id="goQuiz">clip questions</a>`
+  :`<b>Unlocked:</b> words 101–200 · <b>Next:</b> clip questions open when all of words 1–100 are mastered · ${mast} of 100 so far`;
+ const g=$('goQuiz');if(g)g.onclick=e=>{e.preventDefault();$('t-quiz').click()}}
+function unlockLevel2(){S.lvl2=true;W=ALL;save();buildChips();
+ const t=document.createElement('div');t.className='toast';t.innerHTML='<b>Words 101–200 unlocked.</b> All of the first 100 are learnt. The next 100 most frequent words join your daily new cards.';document.body.appendChild(t);setTimeout(()=>t.remove(),9000)}
 function renderList(){
  const lab={new:'Not started',learning:'Learning',learnt:'Learnt',mastered:'Mastered'};
  $('list').innerHTML=W.filter(w=>filter==='all'||status(w.rank)===filter).map(w=>{const s=status(w.rank);return `<li class="${cur&&cur.rank===w.rank?'cur':''}"><button data-r="${w.rank}" title="${esc(w.en)}"><small>${w.rank}</small><span>${esc(w.w)}</span><i class="dot d-${s}" aria-label="${lab[s]}"></i></button></li>`}).join('')||'<li style="color:var(--mute);padding:8px">No words here yet.</li>';
@@ -314,13 +339,13 @@ function renderCard(){
  const ex=clipsOf[w.rank-1][0];
  const nexts=[0,1,2,3].map(g=>fmt(schedule(c,g,now).due-now));
  $('card').innerHTML=`
- <div class="meta"><span>No. ${w.rank} of 100</span><span class="tag t-${s}">${lab[s]}</span>${preview?'<span>Preview: not graded</span>':`<span>${q.due.length} due · ${q.fresh.length} new left today</span>`}</div>
+ <div class="meta"><span>No. ${w.rank} of ${W.length}</span><span class="tag t-${s}">${lab[s]}</span>${preview?'<span>Preview: not graded</span>':`<span>${q.due.length} due · ${q.fresh.length} new left today</span>`}</div>
  <div class="big">${esc(w.w)}</div>
  <div class="reveal ${shown?'':'unrevealed'}">
   <div class="en">${esc(w.en)}</div>
   ${w.note?`<p class="note">${esc(w.note)}</p>`:'<p class="note"></p>'}
   ${ex?`<div class="ex"><div>${hl(ex.de,w,ex)}</div><div style="color:var(--mute);margin-top:4px">${esc(ex.en)} (${ex.spk})</div></div>`:''}
-  <div style="color:var(--mute);font-size:13px;margin-top:8px">${w.src==='deck'?'Meaning from your Anki deck':'Added from the frequency list (not in your deck)'}</div>
+  <div style="color:var(--mute);font-size:13px;margin-top:8px">${w.src==='deck'?'Meaning from your Anki deck':w.src==='freq'?'Words 101–200, from the frequency list':'Added from the frequency list (not in your deck)'}</div>
  </div>
  ${shown&&!preview?`<div class="grades">${['Again','Hard','Good','Easy'].map((t,g)=>`<button class="g${g}" data-g="${g}">${t}<small>${nexts[g]}</small></button>`).join('')}</div>`
   :`<div class="row">${shown?'':'<button class="btn pri" id="bShow">Show answer</button>'}${preview?'<button class="btn" id="bBack">Back to study</button>':''}</div>`}
@@ -335,10 +360,10 @@ function renderCard(){
 function grade(g){
  if(!cur||preview)return;const r=cur.rank;const wasNew=!st(r);
  S.cards[r]=schedule(st(r),g,Date.now());if(wasNew)S.day.n++;
- save();renderStats();pick();
+ save();if(!S.lvl2&&first100Learnt())unlockLevel2();renderStats();pick();
 }
 function renderAll(){renderStats();if(!cur||!preview)pick();else renderCard()}
-$('list').onclick=e=>{const b=e.target.closest('button');if(!b)return;cur=W[+b.dataset.r-1];preview=true;shown=true;renderCard();$('card').scrollIntoView({block:'nearest',behavior:'smooth'})};
+$('list').onclick=e=>{const b=e.target.closest('button');if(!b)return;cur=ALL[+b.dataset.r-1];preview=true;shown=true;renderCard();$('card').scrollIntoView({block:'nearest',behavior:'smooth'})};
 $('flt').onclick=e=>{const b=e.target.closest('button');if(!b)return;filter=b.dataset.f;$('flt').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b));renderList()};
 $('perDay').onclick=e=>{const b=e.target.closest('button');if(!b)return;S.perDay=+b.dataset.n;save();renderStats();if(!preview)pick()};
 $('perDayIn').onchange=e=>{const v=Math.round(+e.target.value);if(!(v>=1)){e.target.value=S.perDay;return}S.perDay=Math.min(100,v);e.target.value=S.perDay;save();renderStats();if(!preview)pick()};
@@ -346,21 +371,24 @@ $('perDayIn').onkeydown=e=>{e.stopPropagation();if(e.key==='Enter')e.target.blur
 document.addEventListener('keydown',e=>{if(e.target.closest('input,textarea'))return;
  if(!$('learn').hidden){if(e.key===' '){e.preventDefault();if(cur&&!shown){shown=true;renderCard()}}else if(shown&&!preview&&'1234'.includes(e.key)&&e.key.length===1)grade(+e.key-1)}
  else if(!$('hear').hidden){if(e.key===' '){e.preventDefault();play()}else if(e.key==='ArrowRight')step(1);else if(e.key==='ArrowLeft')step(-1)}});
-function tab(n){for(const t of['learn','hear','dlg']){$(t).hidden=t!==n;$('t-'+t).setAttribute('aria-selected',t===n)}if(n!=='hear')vid.pause();if(n!=='dlg'&&window.DLG)DLG.leave();if(n==='learn'){renderStats();if(!preview)pick()}}
+function tab(n){for(const t of['home','learn','hear','dlg','chunks','quiz']){$(t).hidden=t!==n;$('t-'+t).setAttribute('aria-selected',t===n)}if(n!=='hear')vid.pause();if(n!=='dlg'&&window.DLG)DLG.leave();if(n!=='quiz'&&window.QZ)QZ.leave();if(n!=='chunks'&&window.CHK)CHK.leave();if(n==='learn'){renderStats();if(!preview)pick()}}
 $('t-dlg').onclick=()=>{tab('dlg');window.DLG&&DLG.open()};
-window.SRS={status:r=>status(r),words:W,go:tab};
-$('t-learn').onclick=()=>tab('learn');$('t-hear').onclick=()=>{tab('hear');renderHear(false)};
+window.SRS={status:r=>status(r),words:ALL.slice(0,100),all:ALL,go:tab,mastered100:first100Mastered,level2:()=>!!S.lvl2,clipsOf:r=>clipsOf[r-1]||[]};
+$('t-quiz').onclick=()=>{tab('quiz');window.QZ&&QZ.open()};
+$('t-chunks').onclick=()=>{tab('chunks');window.CHK&&CHK.open()};
+$('t-learn').onclick=()=>tab('learn');$('t-home').onclick=()=>tab('home');$('t-hear').onclick=()=>{tab('hear');renderHear(false)};
 setInterval(()=>{if(!$('learn').hidden&&!cur){pick();renderStats()}},30000);
 
 /* ---------- hear ---------- */
 const vid=$('vid');let wi=0,k=0,rate=1,loop=false,shadow=false,sub=true,trOn=true,spk='all',t2=null;
 const list=()=>clipsOf[wi].filter(c=>spk==='all'||c.spk===spk);
-$('words').innerHTML=W.map((w,i)=>`<button class="chip ${clipsOf[i].length?'':'none'}" data-i="${i}" aria-pressed="false"><span>${w.rank}. ${esc(w.w)}</span><small>${clipsOf[i].length}</small></button>`).join('');
+function buildChips(){$('words').innerHTML=W.map((w,i)=>`<button class="chip ${clipsOf[i].length?'':'none'}" data-i="${i}" aria-pressed="false"><span>${w.rank}. ${esc(w.w)}</span><small>${clipsOf[i].length}</small></button>`).join('')}
+buildChips();
 $('words').onclick=e=>{const b=e.target.closest('.chip');if(b){wi=+b.dataset.i;k=0;renderHear(true)}};
 function renderHear(auto){
  clearTimeout(t2);$('shadowMsg').textContent='';
  document.querySelectorAll('.chip').forEach(b=>b.setAttribute('aria-pressed',+b.dataset.i===wi));
- const w=W[wi],L=list();if(k>=L.length)k=0;const c=L[k];
+ const w=ALL[wi],L=list();if(k>=L.length)k=0;const c=L[k];
  $('hWord').textContent=w.w;$('hEn').textContent=w.en;$('hCount').textContent=L.length?`${k+1} of ${L.length}`:'No clips yet';
  if(!c){$('who').textContent='';$('de').textContent='No clip has this word yet. Try a nearby word.';$('tr').textContent='';$('cap').innerHTML='';vid.removeAttribute('src');vid.load();$('miss').hidden=false;$('miss').textContent='No clip for this word yet.';return}
  $('who').textContent=`${c.spk} · ${c.a}–${c.b} in the original`;
@@ -382,7 +410,10 @@ $('spk').onclick=e=>{const b=e.target.closest('button');if(!b)return;spk=b.datas
 renderStats();pick();
 }
 </script>
-<script src="js/dialogues.js?v=202611221012"></script>
+<script src="js/dialogues.js?v=202611231332"></script>
+<script src="js/quiz.js?v=202611231332"></script>
+<script src="js/chunks.js?v=202611231332"></script>
+<script src="js/home.js?v=202611231332"></script>
 <script>
 {const r=document.documentElement,b=document.getElementById('themeBtn');
 const cur=()=>r.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');

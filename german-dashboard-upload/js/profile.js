@@ -2,9 +2,9 @@
 // With a database configured (data/config.js › window.GD_DB) each person signs in with a username and password,
 // and their progress follows them to every device. Without one, it falls back to simple per-device profiles.
 (function(){
-const PER=['de100-srs','de25','gd-opened2','gd-best2','gd-rate'],PERS=new Set(PER);
+const PER=['de100-srs','de25','gd-opened2','gd-best2','gd-rate','gd-quiz','gd-chunks'],PERS=new Set(PER);
 // voice / marking settings shared by everyone with an account (so a new phone is ready as soon as you sign in)
-const SH=['gd-elkey','gd-elpick','gd-elvoices','gd-azkey','gd-azregion','gd-gkey','gd-gmodel','gd-gpick','gd-gon'],SHS=new Set(SH);
+const SH=['gd-elkey','gd-elpick','gd-elvoices','gd-azkey','gd-azregion','gd-gkey','gd-gmodel','gd-gpick','gd-gon','gd-ckey'],SHS=new Set(SH);
 const S=Storage.prototype,raw={get:S.getItem,set:S.setItem,rem:S.removeItem};
 const L={get:k=>{try{return raw.get.call(localStorage,k)}catch(e){return null}},set:(k,v)=>{try{raw.set.call(localStorage,k,v)}catch(e){}},rem:k=>{try{raw.rem.call(localStorage,k)}catch(e){}}};
 const J=(s,d)=>{try{const v=JSON.parse(s);return v==null?d:v}catch(e){return d}};
@@ -22,9 +22,10 @@ if(location.hash.startsWith('#setup=')){
    if(j.v){const pk=J(L.get('gd-gpick'),{});pk[j.p||'gemini']=j.v;put('gd-gpick',JSON.stringify(pk))}}
   if(j.e&&j.e.k){put('gd-elkey',JSON.stringify(j.e.k));if(j.e.v)put('gd-elpick',JSON.stringify(j.e.v))}
   if(j.a&&j.a.k){put('gd-azkey',JSON.stringify(j.a.k));put('gd-azregion',JSON.stringify(j.a.r||''))}
+  if(j.c)put('gd-ckey',JSON.stringify(j.c));
   L.set('gd-synct-shared',JSON.stringify(st));
   if(!DB&&j.n&&j.s){if(!list.includes(j.n)){list.push(j.n);L.set('gd-profiles',JSON.stringify(list))}L.set('de100-srs@'+j.n,JSON.stringify(j.s));if(j.o)L.set('gd-opened2@'+j.n,JSON.stringify(j.o));cur=j.n;L.set('gd-profile',cur)}
-  const svc=[j.e&&'ElevenLabs voices',j.a&&'Azure marking',j.k&&'Gemini'].filter(Boolean).join(', ').replace(/, ([^,]*)$/,' and $1')||'nothing';
+  const svc=[j.e&&'ElevenLabs voices',j.a&&'Azure marking',j.c&&'Claude explanations',j.k&&'Gemini'].filter(Boolean).join(', ').replace(/, ([^,]*)$/,' and $1')||'nothing';
   toast=!DB&&j.n&&j.s?`Set up for ${j.n}: connected to ${svc}, and your progress has been brought over.`:`This device is now connected to ${svc}.`;
  }catch(e){toast='That setup link could not be read. Please create a new one.'}
  history.replaceState(null,'',location.pathname+location.search);
@@ -48,11 +49,15 @@ function mergeSRS(x,y){x=J(x,null);y=J(y,null);if(!x)return y;if(!y)return x;
  const when=c=>c?(c.last||0):-1;
  ids.forEach(id=>{const a=(x.cards||{})[id],b=(y.cards||{})[id];cards[id]=when(a)>=when(b)?a:b});o.cards=cards;
  const dx=x.day||{d:'',n:0},dy=y.day||{d:'',n:0};o.day=dx.d===dy.d?{d:dx.d,n:Math.max(dx.n||0,dy.n||0)}:(dx.d>dy.d?dx:dy);
- o.updated=Math.max(x.updated||0,y.updated||0);return o}
+ o.updated=Math.max(x.updated||0,y.updated||0);if(x.lvl2||y.lvl2)o.lvl2=true;return o}
+function mergeQuiz(x,y){x=J(x,null);y=J(y,null);if(!x)return y;if(!y)return x;const r={...x.r};
+ Object.keys(y.r||{}).forEach(k=>{const a=r[k],b=y.r[k];r[k]=!a?b:{ok:!!(a.ok||b.ok),n:Math.max(a.n||0,b.n||0),last:(a.t||0)>=(b.t||0)?a.last:b.last,t:Math.max(a.t||0,b.t||0)}});
+ return {r,early:!!(x.early||y.early),t:Math.max(x.t||0,y.t||0)}}
 function merge(a,b,special){a=a&&a.v?a:{v:{},t:{}};b=b&&b.v?b:{v:{},t:{}};const out={v:{},t:{}};
  new Set([...Object.keys(a.v),...Object.keys(b.v),...Object.keys(a.t||{}),...Object.keys(b.t||{})]).forEach(k=>{
   const av=a.v[k],bv=b.v[k];let v;
-  if(special&&k==='de100-srs'&&av!=null&&bv!=null)v=JSON.stringify(mergeSRS(av,bv));
+  if(special&&(k==='de100-srs'||k==='gd-chunks')&&av!=null&&bv!=null)v=JSON.stringify(mergeSRS(av,bv));
+  else if(special&&k==='gd-quiz'&&av!=null&&bv!=null)v=JSON.stringify(mergeQuiz(av,bv));
   else if(special&&k==='gd-opened2'&&av!=null&&bv!=null)v=JSON.stringify(Object.assign({},J(bv,{}),J(av,{})));
   else{const ta=(a.t||{})[k]||0,tb=(b.t||{})[k]||0;v=ta===tb?(av!==undefined?av:bv):ta>tb?av:bv}
   if(v!==undefined)out.v[k]=v;out.t[k]=Math.max((a.t||{})[k]||0,(b.t||{})[k]||0)});
@@ -101,7 +106,7 @@ function choose(name){name=String(name||'').trim().slice(0,30);if(!name)return;
  if(!list.includes(name)){if(!list.length)PER.forEach(k=>{const v=L.get(k);if(v!=null&&L.get(k+'@'+name)==null)L.set(k+'@'+name,v)});list.push(name);L.set('gd-profiles',JSON.stringify(list))}
  L.set('gd-profile',name);location.reload()}
 function signOut(){if(DB){clearTimeout(timer);L.rem('gd-session')}else L.rem('gd-profile');location.reload()}
-window.Profiles={list:()=>list.slice(),current:()=>cur,choose,signOut,sync:()=>sync('manual'),accounts:!!DB};
+window.Profiles={list:()=>list.slice(),current:()=>cur,choose,signOut,sync:()=>sync('manual'),accounts:!!DB,token:()=>sess&&sess.token,rpc:(fn,b)=>rpc(fn,b)};
 
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function gate(){
